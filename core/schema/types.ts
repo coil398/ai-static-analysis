@@ -71,6 +71,24 @@ export interface Ref {
   confidence: "certain" | "probable" | "speculative";
 }
 
+// §6.8 TypeRelation
+export interface TypeRelation {
+  from_type_id: string; // symbol id of the source type
+  to_type_id: string; // symbol id of the target type
+  kind: "implements" | "embeds" | "converts_to" | "instantiates";
+}
+
+// §6.9 CallEdge
+export interface CallEdge {
+  caller_id: string; // symbol id of the calling function
+  callee_id: string; // symbol id of the called function
+  site: {
+    file_id: string;
+    position: Position;
+  };
+  dispatch: "static" | "dynamic" | "interface";
+}
+
 // §6.7 Diagnostic
 export interface Diagnostic {
   file_id: string;
@@ -92,6 +110,8 @@ export interface Facts {
   deps: Dep[];
   symbols: Symbol[];
   refs: Ref[];
+  type_relations: TypeRelation[];
+  call_edges: CallEdge[];
   diagnostics: Diagnostic[];
   meta?: {
     generator?: string;
@@ -107,6 +127,8 @@ export interface FactsDelta {
     deps?: Dep[];
     symbols?: Symbol[];
     refs?: Ref[];
+    type_relations?: TypeRelation[];
+    call_edges?: CallEdge[];
     diagnostics?: Diagnostic[];
   };
   removed: {
@@ -115,6 +137,8 @@ export interface FactsDelta {
     deps?: Array<{ from_unit_id: string; to_unit_id: string }>;
     symbols?: string[];
     refs?: Array<{ from_symbol_id: string; to_symbol_id: string }>;
+    type_relations?: Array<{ from_type_id: string; to_type_id: string }>;
+    call_edges?: Array<{ caller_id: string; callee_id: string }>;
     diagnostics?: Array<{ file_id: string; position: Position; message: string }>;
   };
 }
