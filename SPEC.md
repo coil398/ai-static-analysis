@@ -133,6 +133,8 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
 - **deps**：unit間依存（import/include/project ref 等）
 - **symbols**：定義（関数/型/メソッド等）
 - **refs**：参照（from→to）
+- **type_relations**：型関係（implements/embeds/converts_to/instantiates）
+- **call_edges**：コールグラフ（caller→callee、dispatch種別付き）
 - **diagnostics**：診断（error/warn/info）
 
 #### 共通要件（MUST）
@@ -158,6 +160,8 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
   "deps": [],
   "symbols": [],
   "refs": [],
+  "type_relations": [],
+  "call_edges": [],
   "diagnostics": [],
   "meta": {
     "generator": "static-analysis",
@@ -232,6 +236,40 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
 }
 ```
 
+### 6.8 TypeRelations（型関係）
+```json
+{
+  "from_type_id": "sym:go:internal/service#type#UserRepository#sig:...",
+  "to_type_id": "sym:go:internal/db#type#Repository#sig:...",
+  "kind": "implements"
+}
+```
+
+- `from_type_id` / `to_type_id`：Symbol の ID を参照する（型はSymbolの一種として管理）
+- `kind`：
+  - `implements`：interface を満たす（Go の暗黙的 interface 実装等）
+  - `embeds`：struct embedding / 継承
+  - `converts_to`：型変換可能
+  - `instantiates`：ジェネリクスの具体化
+
+### 6.9 CallEdges（コールグラフ）
+```json
+{
+  "caller_id": "sym:go:internal/handler#func#Handle#sig:...",
+  "callee_id": "sym:go:internal/service#func#CreateUser#sig:...",
+  "site": {
+    "file_id": "file:internal/handler/user.go",
+    "position": { "line": 42, "column": 12 }
+  },
+  "dispatch": "static"
+}
+```
+
+- `dispatch`：
+  - `static`：直接呼び出し（関数名で静的に解決）
+  - `dynamic`：関数ポインタ / クロージャ経由
+  - `interface`：interface メソッド経由（実際の呼び先は `type_relations` の `implements` と組み合わせて展開）
+
 ### 6.7 Diagnostics
 ```json
 {
@@ -257,7 +295,7 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
 
 ### 7.2 SHOULD（推奨：重くなったときの逃げ道）
 - `facts.json`が巨大になる場合に備え、JSON Lines分割を許容する
-  - `cache/facts/units.jsonl`, `files.jsonl`, `symbols.jsonl`, `refs.jsonl`, `diagnostics.jsonl`
+  - `cache/facts/units.jsonl`, `files.jsonl`, `symbols.jsonl`, `refs.jsonl`, `type_relations.jsonl`, `call_edges.jsonl`, `diagnostics.jsonl`
 - `refs`は件数が爆発しやすいので分割保存を優先する
 - `impact`クエリの高速化のため、派生インデックスを生成してよい
   - 例：`cache/index/unit_by_file.json`等（あくまで生成物）
@@ -282,6 +320,24 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
 
 ※ `scope`は`repo|unit|files|paths`いずれかで指定できること。
 
+### 8.3 InsightAdapter（SHOULD — AI非決定論解析）
+決定論ツールでは取れない「意味」の層をAIで生成する。
+Facts（決定論）とは完全に分離し、`cache/insights.json` に保存する。
+
+- `tag_intents(scope) -> IntentTag[]`
+- `summarize(scope) -> Summary[]`
+- `detect_bug_smells(scope) -> BugSmell[]`
+- `detect_patterns(scope) -> PatternTag[]`
+- `review_naming(scope) -> NamingIssue[]`
+
+※ `scope` は `{unit_ids?, symbol_ids?, file_ids?}` で対象を絞れる（省略時は全体）。
+
+#### 設計原則
+- **分離**：insights は facts と混ぜない。別ファイル、別クエリ、オプトイン参照
+- **トレーサビリティ**：全項目に `meta: {model, confidence, generated_at}` を付与
+- **再生成安全**：`cache/insights.json` は安全に全削除できる。モデル更新時は再生成
+- **fingerprint 非依存**：insights の有効性は facts の fingerprint とは別管理（モデル変更で invalidate）
+
 ---
 
 ## 9. Skills（AIから呼ぶ操作単位）
@@ -303,9 +359,27 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
 - `defs(symbol_query)`：名前/パス/ID検索
 - `refs(symbol_id)`
 - `diagnostics(scope)`
-- `impact(changed_files)`：影響unit/symbol候補を返す（P0はunit中心でよい）
+- `impls(type_id)`：指定した interface を実装する型の一覧（type_relations の implements を逆引き）
+- `callers(symbol_id)`：指定した関数を呼び出している関数の一覧（call_edges の逆引き）
+- `callees(symbol_id)`：指定した関数から呼び出されている関数の一覧
+- `impact(changed_files)`：影響unit/symbol候補を返す（type_relations + call_edges を辿って推移的に展開）
 
-### 9.3 Action（MUST）
+### 9.3 Insight（SHOULD — AI非決定論解析）
+**`analyze(scope?)`**：
+1. facts が存在することを確認（insights は facts に依存）
+2. scope 内の unit/symbol/file に対して InsightAdapter を実行
+3. `cache/insights.json` に保存
+
+**`query_insights(kind, filter?)`**：
+- `intents(target_id?)`：意図タグの一覧・検索
+- `summaries(target_id?)`：要約の取得
+- `smells(file_id?, severity?)`：バグ臭の一覧
+- `patterns(pattern?)`：設計パターンの検索
+- `naming(symbol_id?)`：命名問題の一覧
+
+※ クエリ時に `--min-confidence 0.7` のようにしきい値でフィルタ可能。
+
+### 9.4 Action（MUST）
 - `run_format(scope, profile)`
 - `run_check(scope, profile)`
 - `run_test(scope, profile)`
@@ -335,12 +409,123 @@ JSONストア前提なので、P0は「全件ロード→メモリでフィル�
 5. skills: index/update + query（deps/refs/diagnostics/impact）
 6. actions: check/test（formatは後でも可）
 7. 大規模対応（refs分割、派生索引）を必要に応じて追加
+8. AI Insights（InsightAdapter + insights スキーマ + analyze/query スキル）
 
 ---
 
 ## 13. 禁止事項
 - 生成物（cache）をGit管理対象に入れる運用を前提にしない
 - AIの推測で`refs`/`defs`/`dep`を捏造しない（必ずツール出力に基づく）
+- AI Insights を Facts に混入しない（insights は常に別ファイル・別クエリで管理する）
+
+---
+
+## 14. AI Insights（非決定論解析）
+
+決定論ツールでは取得不可能な「意味」「意図」「品質」の層を AI モデルで生成する。
+Facts（決定論的事実）とは完全に分離して管理する。
+
+### 14.1 ストレージ
+- 保存先：`cache/insights.json`（facts.json とは別ファイル）
+- 安全に全削除できる（facts と独立して再生成可能）
+- fingerprint とは別管理。モデル変更時に再生成する
+
+### 14.2 IntentTag（意図タグ）
+シンボルや unit に対して「役割」「責務」をラベル付けする。
+
+```json
+{
+  "target_id": "sym:go:internal/middleware#func#RequireAuth#sig:...",
+  "target_kind": "symbol",
+  "intent": "auth-guard",
+  "reasoning": "Checks JWT token and returns 401 if invalid before calling next handler",
+  "meta": { "model": "claude-sonnet-4-5-20250929", "confidence": 0.92, "generated_at": "2026-02-15T00:00:00Z" }
+}
+```
+
+用途：impact 分析時に「認証に関わる変更」をフィルタできる。
+
+### 14.3 Summary（要約）
+関数・モジュール・ファイルの自然言語による要約。
+
+```json
+{
+  "target_id": "unit:go:internal/service",
+  "target_kind": "unit",
+  "text": "User CRUD operations with validation. Depends on db package for persistence and auth package for permission checks.",
+  "meta": { "model": "claude-sonnet-4-5-20250929", "confidence": 0.88, "generated_at": "2026-02-15T00:00:00Z" }
+}
+```
+
+用途：シンボル一覧のナビゲーション、コードレビュー時の概要把握。
+
+### 14.4 BugSmell（バグ臭検出）
+決定論ツールが検出しない「疑わしいパターン」を AI が指摘する。
+
+```json
+{
+  "file_id": "file:internal/service/user.go",
+  "position": { "line": 45, "column": 2 },
+  "smell": "swallowed_error",
+  "message": "error from db.Save() is assigned to _ and not propagated or logged",
+  "severity": "high",
+  "meta": { "model": "claude-sonnet-4-5-20250929", "confidence": 0.85, "generated_at": "2026-02-15T00:00:00Z" }
+}
+```
+
+smell の種類（拡張可能）：
+- `swallowed_error`：エラー握りつぶし
+- `nil_check_missing`：nil/null チェック漏れ
+- `race_condition`：競合状態の可能性
+- `resource_leak`：リソースリーク（close 漏れ等）
+- `unchecked_cast`：型アサーション未チェック
+- `logic_error`：論理的な矛盾・条件ミス
+- `other`
+
+### 14.5 PatternTag（設計パターン検出）
+コードベース内の設計パターンを識別する。
+
+```json
+{
+  "target_id": "unit:go:internal/service",
+  "target_kind": "unit",
+  "pattern": "repository",
+  "participants": ["sym:go:internal/service#type#UserRepository#sig:...", "sym:go:internal/db#type#Repository#sig:..."],
+  "meta": { "model": "claude-sonnet-4-5-20250929", "confidence": 0.78, "generated_at": "2026-02-15T00:00:00Z" }
+}
+```
+
+用途：リファクタリング時の構造理解、一貫性チェック。
+
+### 14.6 NamingIssue（命名品質）
+紛らわしい・一貫性のない命名を指摘する。
+
+```json
+{
+  "symbol_id": "sym:go:internal/service#func#Do#sig:...",
+  "issue": "too_generic",
+  "current_name": "Do",
+  "suggestion": "ProcessUserRequest",
+  "message": "Function name 'Do' is too generic for a method that processes user registration requests",
+  "meta": { "model": "claude-sonnet-4-5-20250929", "confidence": 0.72, "generated_at": "2026-02-15T00:00:00Z" }
+}
+```
+
+issue の種類：
+- `misleading`：名前と実際の動作が異なる
+- `too_abbreviated`：略語が多すぎて読めない
+- `inconsistent`：同じコードベース内で命名規則が不統一
+- `too_generic`：汎用的すぎて意味が不明
+- `other`
+
+### 14.7 共通メタデータ（InsightMeta）
+全 insight に必須で付与する。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `model` | string | 生成に使用したモデル ID |
+| `confidence` | number (0..1) | AI の確信度。クエリ時のフィルタに使う |
+| `generated_at` | string (ISO 8601) | 生成日時 |
 
 ---
 

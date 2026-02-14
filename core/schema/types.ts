@@ -119,6 +119,88 @@ export interface Facts {
   };
 }
 
+// --- AI Insights (non-deterministic) — SPEC.md §14 ---
+// Stored separately from Facts (cache/insights.json), never mixed with deterministic data.
+
+// §14.1 Common metadata for all AI-generated insights
+export interface InsightMeta {
+  model: string; // model id that generated this insight (e.g. "claude-sonnet-4-5-20250929")
+  confidence: number; // 0..1
+  generated_at: string; // ISO 8601
+}
+
+// §14.2 Intent tagging — "this function is an auth guard", "this module is a repository"
+export interface IntentTag {
+  target_id: string; // symbol_id or unit_id
+  target_kind: "symbol" | "unit";
+  intent: string; // freeform label (e.g. "auth-guard", "repository-pattern", "error-handler")
+  reasoning: string; // one-line justification
+  meta: InsightMeta;
+}
+
+// §14.3 Summary — natural language description of a symbol or unit
+export interface Summary {
+  target_id: string;
+  target_kind: "symbol" | "unit" | "file";
+  text: string; // 1-3 sentence summary
+  meta: InsightMeta;
+}
+
+// §14.4 Bug smell — suspicious patterns that deterministic tools miss
+export interface BugSmell {
+  file_id: string;
+  position: Position;
+  smell:
+    | "swallowed_error"
+    | "nil_check_missing"
+    | "race_condition"
+    | "resource_leak"
+    | "unchecked_cast"
+    | "logic_error"
+    | "other";
+  message: string;
+  severity: "high" | "medium" | "low";
+  meta: InsightMeta;
+}
+
+// §14.5 Design pattern detection
+export interface PatternTag {
+  target_id: string; // unit_id or symbol_id
+  target_kind: "symbol" | "unit";
+  pattern: string; // e.g. "factory", "observer", "repository", "singleton", "adapter"
+  participants: string[]; // related symbol/unit ids
+  meta: InsightMeta;
+}
+
+// §14.6 Naming quality
+export interface NamingIssue {
+  symbol_id: string;
+  issue:
+    | "misleading"
+    | "too_abbreviated"
+    | "inconsistent"
+    | "too_generic"
+    | "other";
+  current_name: string;
+  suggestion?: string;
+  message: string;
+  meta: InsightMeta;
+}
+
+// §14.7 Top-level Insights container
+export interface Insights {
+  schema_version: number;
+  snapshot: {
+    commit: string;
+    created_at: string;
+  };
+  intent_tags: IntentTag[];
+  summaries: Summary[];
+  bug_smells: BugSmell[];
+  pattern_tags: PatternTag[];
+  naming_issues: NamingIssue[];
+}
+
 // Diff delta for incremental updates (§7.1)
 export interface FactsDelta {
   added: {

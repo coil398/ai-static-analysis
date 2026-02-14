@@ -1,6 +1,8 @@
 export type {
   LanguageAdapter,
   ActionAdapter,
+  InsightAdapter,
+  InsightScope,
   DetectResult,
   DoctorResult,
   ActionResult,
