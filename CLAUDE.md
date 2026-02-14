@@ -40,3 +40,9 @@
 | `update-facts` | 変更ファイルのみを再解析し、facts を差分更新 |
 | `query-facts` | facts に対してクエリを実行（deps/rdeps/defs/refs/diagnostics/impact） |
 | `run-actions` | コードのフォーマット・チェック・テストを実行 |
+
+## 実装状態
+
+- ランタイム: Bun (TypeScript)
+- 現在 MVP Step 1-2 実装中（cache 管理、fingerprint、共通スキーマ、JSON I/O）
+- adapters/ および skills/ の実装コードは未着手

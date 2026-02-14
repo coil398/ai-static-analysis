@@ -8,7 +8,7 @@
 - `static-analysis` は **独立したGitリポジトリ**である。
 - 各プロジェクトで以下に clone して導入する。
 
-  - `./claude/skills/static-analysis/`  （このディレクトリが本レポジトリ）
+  - `.claude/skills/static-analysis/`  （このディレクトリが本レポジトリ）
 
 - 生成物（キャッシュ等）は Git に含めない。
 - 実解析は **決定論ツール（LSP/コンパイラ/静的解析器等）** を利用し、AIの推測で代替しない。

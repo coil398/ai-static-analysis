@@ -1,2 +1,8 @@
 # 生成物（SPEC.md §2 MUST: cache/ は必ず .gitignore）
 cache/
+
+# Dependencies
+node_modules/
+
+# Bun
+bun.lock
