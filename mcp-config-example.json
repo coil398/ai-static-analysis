@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "ai-static-analysis": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/ai-static-analysis/dist/index.js"
+      ]
+    }
+  }
+}
