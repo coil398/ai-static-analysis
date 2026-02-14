@@ -161,10 +161,14 @@ function analyzeFunctionComplexity(node: any, funcData: any) {
       },
       ForInStatement(node: any, state: any) {
         complexity++;
+        currentNesting = state.depth;
+        maxNesting = Math.max(maxNesting, currentNesting);
         walk.recursive(node.body, { depth: state.depth + 1 }, this);
       },
       ForOfStatement(node: any, state: any) {
         complexity++;
+        currentNesting = state.depth;
+        maxNesting = Math.max(maxNesting, currentNesting);
         walk.recursive(node.body, { depth: state.depth + 1 }, this);
       },
       ConditionalExpression() {
