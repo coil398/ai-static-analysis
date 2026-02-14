@@ -37,7 +37,7 @@
 
 ### 配置先
 
-レポジトリルートの `improve-skill.md` のみ（メタスキル、実装コード不要）
+`.claude/skills/improve-skill.md` のみ（メタスキル、実装コード不要）
 
 ### 実装言語
 

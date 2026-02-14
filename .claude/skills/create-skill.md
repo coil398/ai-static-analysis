@@ -143,7 +143,7 @@
 | コア機能 | `core/<module>/` | fingerprint, schema, storage |
 | 言語別解析 | `adapters/<lang>/` | Go adapter, TS adapter |
 | AI 操作単位 | `skills/<name>/` | index, update, query |
-| メタ（開発支援） | レポジトリルートのみ（定義ファイルのみ） | create-skill |
+| メタ（開発支援） | `.claude/skills/` のみ（定義ファイルのみ） | create-skill |
 
 ### 実装雛形の構成
 
