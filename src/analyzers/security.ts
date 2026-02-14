@@ -79,25 +79,6 @@ export async function scanSecurityIssues(
           }
         }
 
-        // Check for innerHTML usage
-        if (node.callee.type === "MemberExpression") {
-          const property = node.callee.property;
-          if (
-            property &&
-            property.type === "Identifier" &&
-            property.name === "innerHTML"
-          ) {
-            issues.push({
-              line: node.loc?.start.line || 0,
-              severity: "medium",
-              type: "xss-risk",
-              message:
-                "innerHTML can introduce XSS vulnerabilities if used with untrusted data",
-              code: ".innerHTML = ...",
-            });
-          }
-        }
-
         // Check for document.write
         if (
           node.callee.type === "MemberExpression" &&
@@ -113,6 +94,24 @@ export async function scanSecurityIssues(
             message:
               "document.write() can introduce XSS vulnerabilities",
             code: "document.write(...)",
+          });
+        }
+      },
+
+      AssignmentExpression(node: any) {
+        // Check for innerHTML usage
+        if (
+          node.left.type === "MemberExpression" &&
+          node.left.property.type === "Identifier" &&
+          node.left.property.name === "innerHTML"
+        ) {
+          issues.push({
+            line: node.loc?.start.line || 0,
+            severity: "medium",
+            type: "xss-risk",
+            message:
+              "innerHTML can introduce XSS vulnerabilities if used with untrusted data",
+            code: ".innerHTML = ...",
           });
         }
       },

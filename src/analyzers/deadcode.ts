@@ -97,10 +97,6 @@ export async function findDeadCode(code: string): Promise<DeadCodeResult> {
           ) {
             foundReturn = true;
           }
-
-          if (stmt.type === "BreakStatement" || stmt.type === "ContinueStatement") {
-            foundReturn = true;
-          }
         }
       },
       IfStatement(node: any) {
