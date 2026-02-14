@@ -19,6 +19,18 @@
 
 ## スキル一覧
 
+### メタスキル（開発支援）
+
 | スキル | 説明 |
 |---|---|
 | `create-skill` | 新しいスキルを作成するためのメタスキル |
+| `improve-skill` | 既存のスキル定義を改善・更新するメタスキル |
+
+### 静的解析スキル
+
+| スキル | 説明 |
+|---|---|
+| `index-facts` | コードベース全体の静的解析を実行し、facts を生成 |
+| `update-facts` | 変更ファイルのみを再解析し、facts を差分更新 |
+| `query-facts` | facts に対してクエリを実行（deps/rdeps/defs/refs/diagnostics/impact） |
+| `run-actions` | コードのフォーマット・チェック・テストを実行 |
