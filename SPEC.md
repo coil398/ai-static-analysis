@@ -338,6 +338,10 @@ Facts（決定論）とは完全に分離し、`cache/insights.json` に保存�
 - **再生成安全**：`cache/insights.json` は安全に全削除できる。モデル更新時は再生成
 - **fingerprint 非依存**：insights の有効性は facts の fingerprint とは別管理（モデル変更で invalidate）
 
+### 8.4 言語別仕様
+各言語固有の仕様は `<LANG>_SPEC.md`（ルート直下）に記載する。
+- `GO_SPEC.md` — Go アダプタ仕様
+
 ---
 
 ## 9. Skills（AIから呼ぶ操作単位）

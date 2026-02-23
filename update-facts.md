@@ -6,7 +6,7 @@
 
 ## 概要
 
-index-facts のフル再構築は時間がかかるため、変更ファイルが少ない場合は差分更新で高速化する。fingerprint 一致時のみ実行可能。
+index-facts のフル再構築は時間がかかるため、変更ファイルが少ない場合は差分更新で高速化する。fingerprint 一致時のみ実行可能。不一致時は自動で index-facts にフォールバック。
 
 ## SPEC.md 参照
 
@@ -15,118 +15,104 @@ index-facts のフル再構築は時間がかかるため、変更ファイル�
   - §4.2 再構築ルール — fingerprint 一致時のみ差分更新許可
   - §7.1 MUST — 差分更新対応、changed_files 入力
 
-## 入力
+## API
 
-- `changed_files`: 変更されたファイルパスのリスト
-  - 例: `["internal/service/user.go", "src/components/User.tsx"]`
-  - Git diff から取得するか、手動指定
-- `profile`: ビルドプロファイル（オプション、index-facts と同じ）
+```typescript
+import { updateFacts } from "./skills/update.ts";
 
-## 出力
+const result = await updateFacts({
+  repoRoot: "/path/to/repo",
+  changedFiles: ["internal/service/user.go", "pkg/auth/auth.go"],
+  cacheDir: "/path/to/cache",  // optional
+  profile: {},                  // optional
+});
+// result: { ok, facts, affectedUnits, fallbackToIndex, errors, warnings }
+```
 
-- 更新された `cache/facts.json`
-- 更新サマリー（影響を受けた units, symbols, refs の数）
+### UpdateOptions
+
+| フィールド | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `repoRoot` | `string` | Yes | リポジトリルートパス |
+| `changedFiles` | `string[]` | Yes | 変更されたファイルパスのリスト（相対パス） |
+| `cacheDir` | `string` | No | キャッシュディレクトリ（default: `<repoRoot>/cache`） |
+| `profile` | `Record<string, string>` | No | ビルドプロファイル |
+
+### UpdateResult
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `ok` | `boolean` | エラーなしで完了したか |
+| `facts` | `Facts` | 更新後の facts |
+| `affectedUnits` | `string[]` | 影響を受けた unit ID リスト |
+| `fallbackToIndex` | `boolean` | フル再構築にフォールバックしたか |
+| `errors` | `string[]` | 致命的エラー |
+| `warnings` | `string[]` | 警告 |
 
 ## 依存
 
 - `core/fingerprint`: fingerprint 比較
 - `core/schema`: facts スキーマ定義
 - `core/storage`: JSON 読み書き
-- `core/diff`: 影響 unit の特定、facts のマージ
-- `adapters/<lang>`: 各言語アダプタ（index_units）
+- `core/diff`: 影響 unit の特定（`impactUnits`）、facts のマージ（`applyDelta`）
+- `skills/index`: フォールバック時のフルインデックス
+- `skills/registry`: アダプタ登録
+- `adapters/<lang>`: 各言語アダプタ（indexUnits, diagnose）
 
 ## 実装
 
 ### 配置先
 
-- スキル実装: `skills/update/`
-- コア依存: `core/fingerprint/`, `core/schema/`, `core/storage/`, `core/diff/`
-- アダプタ依存: `adapters/*/`
-
-### 実装言語
-
-言語不問（index-facts と同じ言語を推奨）
+- スキル実装: `skills/update.ts`
+- テスト: `skills/update.test.ts`
 
 ### 処理フロー
 
 1. **Fingerprint チェック**
    - 現在環境の fingerprint を生成
    - `cache/fingerprint.json` と比較
-   - 不一致の場合は index-facts にフォールバック
+   - 不一致の場合は `indexFacts()` にフォールバック
 
-2. **影響 Unit の特定**
-   - changed_files から影響を受ける units を特定
-   - `core/diff/impact_units(changed_files, facts)` を実行
+2. **既存 Facts の読み込み**
+   - `readFacts()` で `cache/facts.json` を読み込む
+   - 不在の場合は `indexFacts()` にフォールバック
 
-3. **既存 Facts の読み込み**
-   - `cache/facts.json` を読み込む
+3. **影響 Unit の特定**
+   - `impactUnits(changedFiles, facts)` で影響を受ける unit を特定
+   - 影響なしの場合は既存 facts をそのまま返却
 
 4. **影響 Unit の再解析**
-   - 影響を受けた units のみを再度 `index_units()` で解析
-   - FactsDelta を取得
+   - 古いデータの removal delta を構築（affected units を削除）
+   - `applyDelta()` で古いデータを除去
+   - 影響 unit のみを `indexUnits()` で再解析
+   - 新しい FactsDelta を `applyDelta()` でマージ
 
-5. **Facts のマージ**
-   - 既存 facts から影響 unit の古いデータを削除
-   - 新しい FactsDelta をマージ
-   - 参照整合性を維持（削除された symbol への refs を無効化）
+5. **Diagnostics 再取得**
+   - 影響 unit の diagnostics を `diagnose()` で再取得
 
 6. **保存**
-   - 更新された facts を `cache/facts.json` に保存
-   - fingerprint は変更なし（環境が同じため）
+   - `writeFacts()` で更新された facts を保存
 
 ### エラーハンドリング
 
-- Fingerprint 不一致: index-facts にフォールバック（自動）
-- cache/facts.json 不在: index-facts にフォールバック
-- 一部 unit の解析失敗: 該当 unit を diagnostics に記録し、他は継続
-
-## テスト方針
-
-- Unit テスト: impact_units ロジック、facts マージロジック
-- Integration テスト: 差分更新の正確性（フル再構築と結果一致を検証）
-- Performance テスト: 大規模リポジトリでの更新時間計測
+- Fingerprint 不一致: `indexFacts()` にフォールバック（自動）
+- `cache/facts.json` 不在: `indexFacts()` にフォールバック
+- 一部 unit の解析失敗: errors に記録し、他は継続
 
 ## 使用例
 
-### Git diff から自動検出
+```typescript
+import { updateFacts } from "./skills/update.ts";
 
-```bash
-# 変更ファイルを Git から取得して差分更新
-./skills/update/run.sh --auto
+// Git diff から変更ファイルを取得して差分更新
+const result = await updateFacts({
+  repoRoot: "/path/to/repo",
+  changedFiles: ["internal/service/user.go"],
+});
 
-# 内部では以下を実行:
-# changed_files=$(git diff --name-only HEAD)
-# ./skills/update/run.sh --files "$changed_files"
-```
-
-### 手動指定
-
-```bash
-# 特定ファイルの変更を反映
-./skills/update/run.sh --files "internal/service/user.go,src/api/user.ts"
-```
-
-### Fingerprint 不一致時の挙動
-
-```bash
-# Go のバージョンが変わった場合
-$ go version
-go version go1.23.0  # 以前は go1.22.1
-
-$ ./skills/update/run.sh --auto
-[WARN] Fingerprint mismatch (tools.go changed)
-[INFO] Falling back to full index...
-# → index-facts が自動実行される
-```
-
-### 差分更新の効果
-
-```
-# フル index: 120秒
-./skills/index/run.sh
-# 50 units, 5000 symbols
-
-# 1ファイル変更後の差分更新: 3秒
-./skills/update/run.sh --auto
-# 1 unit affected, 10 symbols updated
+if (result.fallbackToIndex) {
+  console.log("Fell back to full index");
+} else {
+  console.log(`Affected units: ${result.affectedUnits.join(", ")}`);
+}
 ```

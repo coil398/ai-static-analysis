@@ -16,36 +16,57 @@
   - §5-6 Facts フォーマット — P0 データモデルへの準拠
   - §7.1 MUST — フル再生成対応、degrade 対応
 
-## 入力
+## API
 
-- `profile`: ビルドプロファイル（オプション）
-  - 例: `{"GOOS": "linux", "GOARCH": "amd64", "TS_CONFIG": "tsconfig.json"}`
-  - 省略時はデフォルト環境を使用
+```typescript
+import { indexFacts } from "./skills/index.ts";
 
-## 出力
+const result = await indexFacts({
+  repoRoot: "/path/to/repo",
+  cacheDir: "/path/to/cache",  // default: "<repoRoot>/cache"
+  profile: { GOOS: "linux" },  // optional
+});
+// result: { ok, facts, fingerprint, errors, warnings }
+```
+
+### IndexOptions
+
+| フィールド | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `repoRoot` | `string` | Yes | リポジトリルートパス |
+| `cacheDir` | `string` | No | キャッシュディレクトリ（default: `<repoRoot>/cache`） |
+| `profile` | `Record<string, string>` | No | ビルドプロファイル |
+
+### IndexResult
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `ok` | `boolean` | エラーなしで完了したか |
+| `facts` | `Facts` | 生成された facts |
+| `fingerprint` | `Fingerprint` | 記録された fingerprint |
+| `errors` | `string[]` | 致命的エラー |
+| `warnings` | `string[]` | 警告（degrade 等） |
+
+## 出力ファイル
 
 - `cache/fingerprint.json`: 生成時の環境・ツールバージョン・コミットハッシュ
 - `cache/facts.json`: 生成された facts（units, files, deps, symbols, refs, diagnostics）
-- ログ: 各言語アダプタの実行結果
 
 ## 依存
 
 - `core/fingerprint`: fingerprint 生成・比較
 - `core/schema`: facts スキーマ定義
 - `core/storage`: JSON 読み書き
-- `adapters/<lang>`: 各言語アダプタ（detect, enumerate_units, index_units）
+- `core/diff`: FactsDelta のマージ
+- `skills/registry`: アダプタ登録
+- `adapters/<lang>`: 各言語アダプタ（detect, enumerate_units, index_units, diagnose）
 
 ## 実装
 
 ### 配置先
 
-- スキル実装: `skills/index/`
-- コア依存: `core/fingerprint/`, `core/schema/`, `core/storage/`
-- アダプタ依存: `adapters/*/`
-
-### 実装言語
-
-言語不問（最初の実装では Python or TypeScript を推奨）
+- スキル実装: `skills/index.ts`
+- テスト: `skills/index.test.ts`
 
 ### 処理フロー
 
@@ -58,7 +79,7 @@
    - 一致の場合でもフル再構築（index は常にフル）
 
 3. **言語検出**
-   - 各アダプタの `detect(repo_root)` を実行
+   - `registry.detectAll(repoRoot)` で検出
    - 検出された言語リストを取得
 
 4. **Doctor チェック**
@@ -66,62 +87,42 @@
    - ツール未導入の場合は警告して該当言語をスキップ（degrade）
 
 5. **Unit 列挙**
-   - 各アダプタの `enumerate_units(repo_root, profile)` を実行
+   - 各アダプタの `enumerateUnits(repoRoot, profile)` を実行
    - すべての unit を収集
 
 6. **Facts 生成**
-   - 各アダプタの `index_units(units, profile)` を実行
-   - FactsDelta を収集し、マージ
+   - 各アダプタの `indexUnits(units, profile)` を実行
+   - FactsDelta を `applyDelta()` でマージ
 
-7. **保存**
-   - `cache/facts.json` に保存
-   - `cache/fingerprint.json` を更新
+7. **Diagnostics 収集**
+   - 各アダプタの `diagnose(units, profile)` を実行
+
+8. **保存**
+   - `writeFacts()` + `writeFingerprint()`
 
 ### エラーハンドリング
 
 - ツール未導入（doctor 失敗）: 該当言語を無効化して継続（SPEC.md §7.1 degrade）
-- 一部の unit で解析失敗: 失敗した unit を diagnostics に記録し、他は継続
-- 保存失敗: エラーログを出力して終了
-
-## テスト方針
-
-- Unit テスト: fingerprint 生成・比較ロジック
-- Integration テスト: 各言語アダプタとの結合（モックアダプタで検証）
-- E2E テスト: 実プロジェクトでの index 実行と facts 検証
+- 一部の unit で解析失敗: エラーを errors に記録し、他は継続
+- 保存失敗: 例外がスローされる
 
 ## 使用例
 
-### 基本的な使用
+```typescript
+import { indexFacts } from "./skills/index.ts";
 
-```bash
-# デフォルト環境で index 実行
-./skills/index/run.sh
+// デフォルト環境で index 実行
+const result = await indexFacts({ repoRoot: "/path/to/repo" });
 
-# 結果確認
-ls -lh cache/
-cat cache/fingerprint.json
-jq '.units | length' cache/facts.json
+console.log(`Units: ${result.facts.units.length}`);
+console.log(`Files: ${result.facts.files.length}`);
+console.log(`Deps: ${result.facts.deps.length}`);
+console.log(`Diagnostics: ${result.facts.diagnostics.length}`);
+
+if (!result.ok) {
+  console.error("Errors:", result.errors);
+}
+if (result.warnings.length > 0) {
+  console.warn("Warnings:", result.warnings);
+}
 ```
-
-### プロファイル指定
-
-```bash
-# クロスコンパイル環境で index
-./skills/index/run.sh --profile '{"GOOS":"windows","GOARCH":"amd64"}'
-```
-
-### 初回実行の流れ
-
-1. cache/ が空の状態で実行
-2. fingerprint 生成
-3. 言語検出（例: Go, TypeScript 検出）
-4. doctor チェック（gopls, typescript-language-server の有無確認）
-5. unit 列挙（全パッケージ・プロジェクト列挙）
-6. 解析実行（並列 or 順次）
-7. facts.json 保存
-
-### 2回目実行の流れ
-
-1. 既存 fingerprint と比較
-2. 不一致の場合は cache/ wipe → 初回と同じフル再構築
-3. 一致の場合もフル再構築（index は常にフル、差分更新は update-facts で実施）

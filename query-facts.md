@@ -14,226 +14,149 @@ AI がコード変更の影響範囲や関連コードを理解するために�
 - 関連要件:
   - §10 クエリ仕様 — 大規模対応のための派生インデックス
 
-## 入力
+## API
 
-クエリ種別に応じて異なる：
+```typescript
+import {
+  queryDeps,
+  queryRdeps,
+  queryDefs,
+  queryRefs,
+  queryDiagnostics,
+  queryImpact,
+  queryImpls,
+  queryCallers,
+  queryCallees,
+} from "./skills/query.ts";
 
-- `deps(unit_id)`: 指定 unit が依存する unit のリスト
-- `rdeps(unit_id)`: 指定 unit に依存する unit のリスト（逆引き）
-- `defs(symbol_query)`: シンボル検索（名前/パス/ID）
-- `refs(symbol_id)`: 指定シンボルへの参照リスト
-- `diagnostics(scope)`: 診断情報（scope: unit/file/repo）
-- `impact(changed_files)`: 変更ファイルから影響を受ける unit/symbol 候補
+const opts = { repoRoot: "/path/to/repo", cacheDir: "/path/to/cache" };
+```
 
-## 出力
+### QueryOptions（共通）
 
-クエリ結果（JSON 形式）。各クエリの出力例：
+| フィールド | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `repoRoot` | `string` | Yes | リポジトリルートパス |
+| `cacheDir` | `string` | No | キャッシュディレクトリ（default: `<repoRoot>/cache`） |
 
-```json
-// deps(unit_id)
-{"deps": ["unit:go:internal/db", "unit:go:pkg/auth"]}
+### クエリ関数一覧
 
-// rdeps(unit_id)
-{"rdeps": ["unit:go:internal/handler", "unit:go:cmd/server"]}
+#### `queryDeps(unitId, opts) → DepsResult`
 
-// defs(symbol_query)
-{"symbols": [{"id": "sym:...", "name": "CreateUser", ...}]}
+指定 unit が依存する unit のリスト。
 
-// refs(symbol_id)
-{"refs": [{"from_symbol_id": "...", "site": {...}, "kind": "call"}]}
+```typescript
+const { deps } = await queryDeps("unit:go:internal/service", opts);
+// deps: Dep[] — from_unit_id が unitId に一致する依存
+```
 
-// diagnostics(scope)
-{"diagnostics": [{"file_id": "...", "severity": "warning", ...}]}
+#### `queryRdeps(unitId, opts) → RdepsResult`
 
-// impact(changed_files)
-{"affected_units": [...], "affected_symbols": [...]}
+指定 unit に依存する unit のリスト（逆引き）。
+
+```typescript
+const { rdeps } = await queryRdeps("unit:go:pkg/auth", opts);
+// rdeps: Dep[] — to_unit_id が unitId に一致する依存
+```
+
+#### `queryDefs(query, opts) → DefsResult`
+
+シンボル検索（名前/パス/ID）。
+
+```typescript
+// 名前検索
+const { symbols } = await queryDefs("CreateUser", opts);
+
+// 複合検索
+const { symbols } = await queryDefs({ name: "CreateUser", path: "service" }, opts);
+
+// ID 検索
+const { symbols } = await queryDefs({ id: "sym:go:..." }, opts);
+```
+
+#### `queryRefs(symbolId, opts) → RefsResult`
+
+指定シンボルへの参照リスト。
+
+```typescript
+const { refs } = await queryRefs("sym:go:internal/service#func#CreateUser#sig:0", opts);
+// refs: Ref[] — to_symbol_id が symbolId に一致する参照
+```
+
+#### `queryDiagnostics(scope, opts) → DiagnosticsResult`
+
+診断情報（scope: repo/unit/file）。
+
+```typescript
+// リポジトリ全体
+const { diagnostics } = await queryDiagnostics("repo", opts);
+
+// unit スコープ
+const { diagnostics } = await queryDiagnostics({ unit: "unit:go:pkg" }, opts);
+
+// file スコープ
+const { diagnostics } = await queryDiagnostics({ file: "main.go" }, opts);
+```
+
+#### `queryImpact(changedFiles, opts) → ImpactResult`
+
+変更ファイルから影響を受ける unit と関連 deps を返す。
+
+```typescript
+const { affectedUnits, affectedDeps } = await queryImpact(["main.go"], opts);
+```
+
+#### `queryImpls(typeId, opts) → ImplsResult`
+
+指定した interface を実装する型の一覧。
+
+```typescript
+const { implementations } = await queryImpls("sym:go:pkg#type#Repository#sig:0", opts);
+```
+
+#### `queryCallers(symbolId, opts) → CallersResult`
+
+指定した関数を呼び出している関数の一覧。
+
+```typescript
+const { callers } = await queryCallers("sym:go:pkg#func#Create#sig:0", opts);
+```
+
+#### `queryCallees(symbolId, opts) → CalleesResult`
+
+指定した関数から呼び出されている関数の一覧。
+
+```typescript
+const { callees } = await queryCallees("sym:go:pkg#func#Handle#sig:0", opts);
 ```
 
 ## 依存
 
 - `core/storage`: facts の読み込み
-- `core/query`: クエリエンジン（派生インデックス利用）
+- `core/diff`: impact 分析（`impactUnits`）
 
 ## 実装
 
 ### 配置先
 
-- スキル実装: `skills/query/`
-- コア依存: `core/storage/`, `core/query/`
+- スキル実装: `skills/query.ts`
+- テスト: `skills/query.test.ts`
 
-### 実装言語
+### 処理
 
-言語不問（index-facts と同じ言語を推奨）
-
-### 処理フロー
-
-#### 共通フロー
-
-1. **Facts の読み込み**
-   - `cache/facts.json` を読み込む
-   - 派生インデックス（あれば）も読み込む
-
-2. **クエリ実行**
-   - 各クエリ種別に応じた処理
-
-3. **結果の返却**
-   - JSON 形式で返却
-
-#### クエリ別処理
-
-**deps(unit_id)**
-1. facts.deps から `from_unit_id == unit_id` を抽出
-2. `to_unit_id` のリストを返却
-
-**rdeps(unit_id)**
-1. facts.deps から `to_unit_id == unit_id` を抽出
-2. `from_unit_id` のリストを返却
-
-**defs(symbol_query)**
-1. symbol_query のタイプを判定（name/path/id）
-2. facts.symbols から該当するものを検索
-3. マッチした symbols を返却
-
-**refs(symbol_id)**
-1. facts.refs から `to_symbol_id == symbol_id` を抽出
-2. refs のリストを返却
-
-**diagnostics(scope)**
-1. scope に応じてフィルタ（unit_id/file_id/全体）
-2. facts.diagnostics から該当するものを返却
-
-**impact(changed_files)**
-1. changed_files から file_id のリストを生成
-2. files → unit_id のマッピングで影響 units を特定
-3. symbols.decl.file_id から影響 symbols を特定
-4. 両方を返却
+各関数は `readFacts()` → メモリ上でフィルタ。MVP では派生インデックス不要。
 
 ### エラーハンドリング
 
-- cache/facts.json 不在: エラーメッセージ「index-facts を先に実行してください」
+- `cache/facts.json` 不在: `"No cached facts found. Run index-facts first."` をスロー
 - 不正な unit_id/symbol_id: 空リストを返却
-- クエリ構文エラー: エラーメッセージと使用例を返却
 
-## テスト方針
+## MVP 制約
 
-- Unit テスト: 各クエリロジックの正確性
-- Integration テスト: 実 facts.json でのクエリ実行
-- Performance テスト: 大規模 facts でのクエリ速度計測
+現在の Go アダプタは symbols, refs, type_relations, call_edges を空配列で返すため、以下のクエリは空結果になる:
+- `queryDefs` — 名前検索は空
+- `queryRefs` — 参照なし
+- `queryImpls` — 型関係なし
+- `queryCallers` / `queryCallees` — コールグラフなし
 
-## 使用例
-
-### deps クエリ
-
-```bash
-# internal/service が依存する unit を取得
-./skills/query/run.sh deps --unit "unit:go:internal/service"
-
-# 出力:
-# {
-#   "deps": [
-#     "unit:go:internal/db",
-#     "unit:go:pkg/auth",
-#     "unit:go:pkg/logger"
-#   ]
-# }
-```
-
-### rdeps クエリ
-
-```bash
-# pkg/auth に依存している unit を取得
-./skills/query/run.sh rdeps --unit "unit:go:pkg/auth"
-
-# 出力:
-# {
-#   "rdeps": [
-#     "unit:go:internal/service",
-#     "unit:go:internal/handler",
-#     "unit:go:cmd/server"
-#   ]
-# }
-```
-
-### defs クエリ
-
-```bash
-# CreateUser という名前のシンボルを検索
-./skills/query/run.sh defs --name "CreateUser"
-
-# 出力:
-# {
-#   "symbols": [
-#     {
-#       "id": "sym:go:internal/service#func#CreateUser#sig:...",
-#       "name": "CreateUser",
-#       "kind": "function",
-#       "signature": "func CreateUser(ctx context.Context, u User) error",
-#       "exported": true,
-#       "decl": {
-#         "file_id": "file:internal/service/user.go",
-#         "position": {"line": 10, "column": 1}
-#       }
-#     }
-#   ]
-# }
-```
-
-### refs クエリ
-
-```bash
-# CreateUser への参照を取得
-./skills/query/run.sh refs --symbol "sym:go:internal/service#func#CreateUser#sig:..."
-
-# 出力:
-# {
-#   "refs": [
-#     {
-#       "from_symbol_id": "sym:go:internal/handler#func#HandleCreateUser#sig:...",
-#       "to_symbol_id": "sym:go:internal/service#func#CreateUser#sig:...",
-#       "site": {
-#         "file_id": "file:internal/handler/user.go",
-#         "position": {"line": 25, "column": 15}
-#       },
-#       "kind": "call",
-#       "confidence": "certain"
-#     }
-#   ]
-# }
-```
-
-### diagnostics クエリ
-
-```bash
-# 全診断を取得
-./skills/query/run.sh diagnostics --scope repo
-
-# エラーのみフィルタ
-./skills/query/run.sh diagnostics --scope repo --severity error
-```
-
-### impact クエリ
-
-```bash
-# 変更ファイルの影響範囲を取得
-./skills/query/run.sh impact --files "internal/service/user.go"
-
-# 出力:
-# {
-#   "affected_units": ["unit:go:internal/service"],
-#   "affected_symbols": [
-#     "sym:go:internal/service#func#CreateUser#sig:...",
-#     "sym:go:internal/service#func#UpdateUser#sig:..."
-#   ]
-# }
-```
-
-## パフォーマンス最適化
-
-SPEC.md §10 に従い、以下の派生インデックスを生成して高速化可能：
-
-- `cache/index/unit_by_path.json`: unit 検索高速化
-- `cache/index/file_to_unit.json`: file → unit マッピング
-- `cache/index/symbol_by_name.json`: シンボル名検索高速化
-- `cache/index/refs_by_target.json`: refs クエリ高速化（symbol_id → refs）
-
-これらは `index-facts` または `update-facts` 実行時に自動生成される。
+gopls 統合後に有効になる。
