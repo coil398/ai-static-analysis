@@ -43,6 +43,8 @@
 | `update-facts` | 変更ファイルのみを再解析し、facts を差分更新 |
 | `query-facts` | facts に対してクエリを実行（deps/rdeps/defs/refs/diagnostics/impact） |
 | `run-actions` | コードのフォーマット・チェック・テストを実行 |
+| `analyze-insights` | facts とソースを読んで AI 分析を実行し、insights を生成 |
+| `query-insights` | cache/insights.json から AI 分析結果をクエリ |
 
 ## 実装状態
 
@@ -50,6 +52,8 @@
 - MVP Step 1-3 完了（cache 管理、fingerprint、共通スキーマ、JSON I/O、アダプタフレームワーク）
 - MVP Step 4 完了（Go アダプタ、言語別仕様体制）
 - MVP Step 5-6 完了（skills 層: index/update/query/actions + core/diff）
+- Step 7 完了（大規模対応: JSONL ストレージ、派生索引、クエリ最適化）
+- Step 8 完了（AI Insights: loadInsightContext、query*、analyze-insights.md、query-insights.md）
 
 ## 開発メモ
 
@@ -57,3 +61,6 @@
 - Step 5-6: `applyDelta` は structuredClone で元データを保護。cascade 削除は unit→files→symbols→refs/type_relations/call_edges/diagnostics の順。`impactUnits` は file:prefix の有無を両方許容。
 - Step 5-6: skills 層は `createRegistry()` で毎回新しいレジストリを生成する設計。将来 DI に変えるなら引数に渡す形に変更する。
 - Step 5-6: Go adapter の `go fmt ./...` は cwd が設定されない問題あり（adapter 側の課題）。skills/actions のテストでは files scope で回避。
+- Step 7: JSONL は `cache/facts/` ディレクトリの有無で自動判別（ディレクトリ優先）。`readFacts` は後方互換のため JSON フォールバックを維持。インデックスは `cache/index/` に JSON で保存。
+- Step 7: `queryDefs`（name 検索）と `queryRefs` はインデックスがある場合のみ使用し、なければ既存のフルスキャンにフォールバック。
+- Step 8: InsightAdapter インターフェース（外部 AI API 呼び出し）は実装しない設計。Claude Code 自身がスキル定義（.md）を読んで分析を行う。`skills/insights.ts` はコンテキスト準備と query* のみ担当。

@@ -15,6 +15,7 @@ import {
   writeFingerprint,
 } from "../core/storage/index.ts";
 import { applyDelta } from "../core/diff/index.ts";
+import { buildIndexes } from "../core/index/index.ts";
 import { createRegistry } from "./registry.ts";
 
 export interface IndexOptions {
@@ -135,6 +136,7 @@ export async function indexFacts(options: IndexOptions): Promise<IndexResult> {
   // 7. Persist
   await writeFacts(cacheDir, facts);
   await writeFingerprint(cacheDir, fingerprint);
+  await buildIndexes(cacheDir, facts);
 
   return {
     ok: errors.length === 0,

@@ -13,6 +13,10 @@ import type {
 } from "../core/schema/types.ts";
 import { readFacts } from "../core/storage/index.ts";
 import { impactUnits } from "../core/diff/index.ts";
+import {
+  loadSymbolByName,
+  loadRefsBySymbol,
+} from "../core/index/index.ts";
 
 export interface QueryOptions {
   repoRoot: string;
@@ -65,10 +69,14 @@ export interface CalleesResult {
   callees: CallEdge[];
 }
 
-// --- Internal helper ---
+// --- Internal helpers ---
+
+function resolveCacheDir(opts: QueryOptions): string {
+  return opts.cacheDir ?? join(opts.repoRoot, "cache");
+}
 
 async function loadFacts(opts: QueryOptions): Promise<Facts> {
-  const cacheDir = opts.cacheDir ?? join(opts.repoRoot, "cache");
+  const cacheDir = resolveCacheDir(opts);
   const facts = await readFacts(cacheDir);
   if (!facts) {
     throw new Error(
@@ -102,13 +110,31 @@ export async function queryDefs(
   query: string | { name?: string; path?: string; id?: string },
   opts: QueryOptions,
 ): Promise<DefsResult> {
+  const cacheDir = resolveCacheDir(opts);
   const facts = await loadFacts(opts);
 
   let symbols: Symbol[];
   if (typeof query === "string") {
-    // Simple name search
-    symbols = facts.symbols.filter((s) => s.name === query);
+    // Use symbol_by_name index when available
+    const index = await loadSymbolByName(cacheDir);
+    if (index) {
+      const ids = index[query] ?? [];
+      const idSet = new Set(ids);
+      symbols = facts.symbols.filter((s) => idSet.has(s.id));
+    } else {
+      symbols = facts.symbols.filter((s) => s.name === query);
+    }
   } else {
+    // For structured queries, use index only for name-only lookups
+    if (query.name && !query.path && !query.id) {
+      const index = await loadSymbolByName(cacheDir);
+      if (index) {
+        const ids = index[query.name] ?? [];
+        const idSet = new Set(ids);
+        symbols = facts.symbols.filter((s) => idSet.has(s.id));
+        return { symbols };
+      }
+    }
     symbols = facts.symbols.filter((s) => {
       if (query.id && s.id !== query.id) return false;
       if (query.name && s.name !== query.name) return false;
@@ -128,6 +154,12 @@ export async function queryRefs(
   symbolId: string,
   opts: QueryOptions,
 ): Promise<RefsResult> {
+  const cacheDir = resolveCacheDir(opts);
+  const index = await loadRefsBySymbol(cacheDir);
+  if (index) {
+    const refs = index[symbolId] ?? [];
+    return { symbolId, refs };
+  }
   const facts = await loadFacts(opts);
   const refs = facts.refs.filter((r) => r.to_symbol_id === symbolId);
   return { symbolId, refs };
