@@ -52,6 +52,7 @@
 - ランタイム: Bun (TypeScript)
 - MVP Step 1-3 完了（cache 管理、fingerprint、共通スキーマ、JSON I/O、アダプタフレームワーク）
 - MVP Step 4 完了（Go アダプタ、言語別仕様体制）
+- 言語アダプタ拡充: TypeScript, Python, C#, Rust アダプタを追加。共通ユーティリティを `adapters/shared/` に切り出し。各アダプタは detect/enumerateUnits/indexUnits(files+deps)/diagnose/doctor/bootstrap + ActionAdapter を実装。シンボル/参照/型関係/呼び出しグラフは LSP 統合時に追加予定（現状は graceful degrade で空配列）。
 - MVP Step 5-6 完了（skills 層: index/update/query/actions + core/diff）
 - Step 7 完了（大規模対応: JSONL ストレージ、派生索引、クエリ最適化）
 - Step 8 完了（AI Insights: loadInsightContext、query*、analyze-insights.md、query-insights.md）
