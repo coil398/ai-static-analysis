@@ -25,6 +25,8 @@ describe("storage", () => {
     deps: [],
     symbols: [],
     refs: [],
+    type_relations: [],
+    call_edges: [],
     diagnostics: [],
   };
 

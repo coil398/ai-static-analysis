@@ -24,6 +24,13 @@ export interface DoctorResult {
   notes: string[];
 }
 
+// §8.1 bootstrap() result
+export interface BootstrapResult {
+  installed: string[]; // tools successfully installed
+  failed: Array<{ tool: string; reason: string }>; // tools that failed
+  notes: string[];
+}
+
 // §8.2 action result
 export interface ActionResult {
   ok: boolean;
@@ -56,6 +63,7 @@ export interface LanguageAdapter {
     profile: Record<string, string>,
   ): Promise<Diagnostic[]>;
   doctor(): Promise<DoctorResult>;
+  bootstrap(): Promise<BootstrapResult>;
 }
 
 // §8.3 InsightAdapter — AI-powered non-deterministic analysis
@@ -79,14 +87,17 @@ export interface InsightAdapter {
 export interface ActionAdapter {
   readonly lang: string;
   format(
+    repoRoot: string,
     scope: Scope,
     profile: Record<string, string>,
   ): Promise<ActionResult>;
   check(
+    repoRoot: string,
     scope: Scope,
     profile: Record<string, string>,
   ): Promise<ActionResult>;
   test(
+    repoRoot: string,
     scope: Scope,
     profile: Record<string, string>,
   ): Promise<ActionResult>;

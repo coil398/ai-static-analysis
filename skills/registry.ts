@@ -2,9 +2,17 @@
 
 import { AdapterRegistry } from "../core/adapter/index.ts";
 import { GoLanguageAdapter, GoActionAdapter } from "../adapters/go/index.ts";
+import { TypeScriptLanguageAdapter, TypeScriptActionAdapter } from "../adapters/typescript/index.ts";
+import { PythonLanguageAdapter, PythonActionAdapter } from "../adapters/python/index.ts";
+import { CSharpLanguageAdapter, CSharpActionAdapter } from "../adapters/csharp/index.ts";
+import { RustLanguageAdapter, RustActionAdapter } from "../adapters/rust/index.ts";
 
 export function createRegistry(): AdapterRegistry {
   const registry = new AdapterRegistry();
   registry.register(new GoLanguageAdapter(), new GoActionAdapter());
+  registry.register(new TypeScriptLanguageAdapter(), new TypeScriptActionAdapter());
+  registry.register(new PythonLanguageAdapter(), new PythonActionAdapter());
+  registry.register(new CSharpLanguageAdapter(), new CSharpActionAdapter());
+  registry.register(new RustLanguageAdapter(), new RustActionAdapter());
   return registry;
 }

@@ -62,6 +62,22 @@ units と symbols から設計パターンを検出する。
 例: "factory", "observer", "repository", "singleton", "adapter", "command"
 ```
 
+#### duplication_hints — 重複・共通化候補
+
+`ctx.sources` とシンボル構造を分析し、以下を検出する：
+
+- 類似した処理ロジックを持つ関数群 → `extract_function`
+- 共通インターフェースに抽象化できる型群 → `extract_interface`
+- モジュール分割で共通化できるコード → `extract_module`
+- パラメータ化で統一できる微差のコード → `parameterize`
+
+`ctx.facts.diagnostics` に `tool: "dupl"` のエントリがある場合、それを手がかりにソースを確認し、具体的な共通化提案を生成する。
+
+```
+例: { target_ids: ["sym:go:pkg#func#CreateUser", "sym:go:pkg#func#UpdateUser"],
+       suggestion: "extract_function", message: "Both functions share identical validation logic (lines 10-25). Extract to a validateUser() helper." }
+```
+
 #### naming_issues — 命名品質レビュー
 
 symbols の名前を評価し、次のカテゴリを記録する：
@@ -80,11 +96,12 @@ symbols の名前を評価し、次のカテゴリを記録する：
 interface Insights {
   schema_version: 1;
   snapshot: { commit: string; created_at: string };  // ctx.facts.snapshot と同じ
-  intent_tags:   IntentTag[];
-  summaries:     Summary[];
-  bug_smells:    BugSmell[];
-  pattern_tags:  PatternTag[];
-  naming_issues: NamingIssue[];
+  intent_tags:       IntentTag[];
+  summaries:         Summary[];
+  bug_smells:        BugSmell[];
+  pattern_tags:      PatternTag[];
+  naming_issues:     NamingIssue[];
+  duplication_hints: DuplicationHint[];
 }
 
 interface InsightMeta {

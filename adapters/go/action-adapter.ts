@@ -11,26 +11,27 @@ export class GoActionAdapter implements ActionAdapter {
   readonly lang = "go";
 
   async format(
+    repoRoot: string,
     scope: Scope,
     _profile: Record<string, string>,
   ): Promise<ActionResult> {
-    // Use `go fmt` instead of `gofmt` directly — more portable
     const targets = this.scopeToGoTargets(scope);
-    return this.run(["go", "fmt", ...targets], scope);
+    return this.run(["go", "fmt", ...targets], repoRoot);
   }
 
   async check(
+    repoRoot: string,
     scope: Scope,
     _profile: Record<string, string>,
   ): Promise<ActionResult> {
     const targets = this.scopeToGoTargets(scope);
 
     // Run go build first
-    const build = await this.run(["go", "build", ...targets], scope);
+    const build = await this.run(["go", "build", ...targets], repoRoot);
     if (!build.ok) return build;
 
     // Then go vet
-    const vet = await this.run(["go", "vet", ...targets], scope);
+    const vet = await this.run(["go", "vet", ...targets], repoRoot);
     return {
       ok: vet.ok,
       stdout: [build.stdout, vet.stdout].filter(Boolean).join("\n"),
@@ -40,16 +41,16 @@ export class GoActionAdapter implements ActionAdapter {
   }
 
   async test(
+    repoRoot: string,
     scope: Scope,
     _profile: Record<string, string>,
   ): Promise<ActionResult> {
     const targets = this.scopeToGoTargets(scope);
-    return this.run(["go", "test", ...targets], scope);
+    return this.run(["go", "test", ...targets], repoRoot);
   }
 
-  private async run(cmd: string[], scope: Scope): Promise<ActionResult> {
-    const cwd = this.scopeToCwd(scope);
-    const result = await exec(cmd, cwd ? { cwd } : undefined);
+  private async run(cmd: string[], cwd: string): Promise<ActionResult> {
+    const result = await exec(cmd, { cwd });
     return {
       ok: result.exitCode === 0,
       stdout: result.stdout,
@@ -62,18 +63,16 @@ export class GoActionAdapter implements ActionAdapter {
     switch (scope.kind) {
       case "repo":
         return ["./..."];
-      case "unit":
-        return [`./${scope.unitId}/...`];
+      case "unit": {
+        // unitId format: "unit:go:<path>" — extract path part
+        const parts = scope.unitId.split(":");
+        const path = parts.slice(2).join(":");
+        return [`./${path}/...`];
+      }
       case "files":
         return scope.paths;
       case "paths":
         return scope.globs;
     }
-  }
-
-  private scopeToCwd(scope: Scope): string | undefined {
-    // For unit scope, the unitId might encode the repo root info
-    // For now, return undefined (caller should set cwd appropriately)
-    return undefined;
   }
 }

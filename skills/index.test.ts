@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { indexFacts } from "./index.ts";
+import { whichTool } from "../adapters/go/utils.ts";
+
+const hasGopls = await whichTool("gopls") !== null;
 
 const TESTDATA = resolve(
   import.meta.dir,
@@ -42,7 +45,12 @@ describe("indexFacts", () => {
 
     // Verify deps exist (main imports pkg)
     expect(result.facts.deps.length).toBeGreaterThan(0);
-  });
+
+    // Verify symbols are populated via gopls (when available)
+    if (hasGopls) {
+      expect(result.facts.symbols.length).toBeGreaterThan(0);
+    }
+  }, 30_000);
 
   test("persists facts and fingerprint to cache", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "index-test-"));
@@ -50,11 +58,12 @@ describe("indexFacts", () => {
 
     await indexFacts({ repoRoot: TESTDATA, cacheDir });
 
-    const factsFile = Bun.file(join(cacheDir, "facts.json"));
+    // JSONL format: facts are written to cache/facts/ directory
+    const metaFile = Bun.file(join(cacheDir, "facts", "meta.json"));
     const fpFile = Bun.file(join(cacheDir, "fingerprint.json"));
-    expect(await factsFile.exists()).toBe(true);
+    expect(await metaFile.exists()).toBe(true);
     expect(await fpFile.exists()).toBe(true);
-  });
+  }, 30_000);
 
   test("second index reuses fingerprint check", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "index-test-"));
@@ -67,5 +76,5 @@ describe("indexFacts", () => {
 
     expect(result.ok).toBe(true);
     expect(result.facts.units.length).toBeGreaterThan(0);
-  });
+  }, 60_000);
 });

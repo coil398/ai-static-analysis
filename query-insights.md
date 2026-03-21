@@ -15,6 +15,7 @@ import {
   querySmells,
   queryPatterns,
   queryNaming,
+  queryDuplicationHints,
 } from "./skills/insights.ts";
 
 const opts = {
@@ -72,6 +73,16 @@ const allIssues = await queryNaming(undefined, opts);
 const symIssues = await queryNaming("sym:go:main#Foo#func()", opts);
 ```
 
+### duplication_hints を取得
+
+```typescript
+// 全件
+const allHints = await queryDuplicationHints(undefined, opts);
+
+// 特定の symbol/unit に関連するヒント
+const symHints = await queryDuplicationHints("sym:go:pkg#func#CreateUser#sig:abc", opts);
+```
+
 ## 出力形式
 
 各関数は対応する型の配列を返す。例：
@@ -85,6 +96,9 @@ const symIssues = await queryNaming("sym:go:main#Foo#func()", opts);
 
 // NamingIssue
 { symbol_id, issue, current_name, suggestion?, message, meta }
+
+// DuplicationHint
+{ target_ids, target_kind, suggestion, message, estimated_savings?, meta }
 ```
 
 詳細な型定義は `core/schema/types.ts` の §14 を参照。

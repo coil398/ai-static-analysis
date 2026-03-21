@@ -8,10 +8,11 @@ export interface ExecResult {
 
 export async function exec(
   cmd: string[],
-  opts?: { cwd?: string },
+  opts?: { cwd?: string; env?: Record<string, string> },
 ): Promise<ExecResult> {
   const proc = Bun.spawn(cmd, {
     cwd: opts?.cwd,
+    env: opts?.env ? { ...process.env, ...opts.env } : undefined,
     stdout: "pipe",
     stderr: "pipe",
   });

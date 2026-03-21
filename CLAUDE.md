@@ -45,12 +45,14 @@
 | `run-actions` | コードのフォーマット・チェック・テストを実行 |
 | `analyze-insights` | facts とソースを読んで AI 分析を実行し、insights を生成 |
 | `query-insights` | cache/insights.json から AI 分析結果をクエリ |
+| `bootstrap-tools` | 不足する解析ツールを自動インストール |
 
 ## 実装状態
 
 - ランタイム: Bun (TypeScript)
 - MVP Step 1-3 完了（cache 管理、fingerprint、共通スキーマ、JSON I/O、アダプタフレームワーク）
 - MVP Step 4 完了（Go アダプタ、言語別仕様体制）
+- 言語アダプタ拡充: TypeScript, Python, C#, Rust アダプタを追加。共通ユーティリティを `adapters/shared/` に切り出し。各アダプタは detect/enumerateUnits/indexUnits(files+deps)/diagnose/doctor/bootstrap + ActionAdapter を実装。シンボル/参照/型関係/呼び出しグラフは LSP 統合時に追加予定（現状は graceful degrade で空配列）。
 - MVP Step 5-6 完了（skills 層: index/update/query/actions + core/diff）
 - Step 7 完了（大規模対応: JSONL ストレージ、派生索引、クエリ最適化）
 - Step 8 完了（AI Insights: loadInsightContext、query*、analyze-insights.md、query-insights.md）
@@ -60,7 +62,22 @@
 - メタスキル (`create-skill`, `improve-skill`) は core/ の実装作業では出番がなかった。ルート直下のスキル定義 .md を作成する Step 5 以降で初めて使う想定。実際に使ってみてテンプレート・チェックリストが重すぎないか要検証
 - Step 5-6: `applyDelta` は structuredClone で元データを保護。cascade 削除は unit→files→symbols→refs/type_relations/call_edges/diagnostics の順。`impactUnits` は file:prefix の有無を両方許容。
 - Step 5-6: skills 層は `createRegistry()` で毎回新しいレジストリを生成する設計。将来 DI に変えるなら引数に渡す形に変更する。
-- Step 5-6: Go adapter の `go fmt ./...` は cwd が設定されない問題あり（adapter 側の課題）。skills/actions のテストでは files scope で回避。
+- Step 5-6→修正済: Go adapter の cwd 問題を解決。ActionAdapter インターフェースに `repoRoot` を第一引数として追加。unit scope の unitId から `unit:go:` プレフィックスを除去してパスを抽出するよう修正。
+- Go adapter: `exec()` に `env` パラメータを追加し、`goList()` で GOOS/GOARCH/GOTAGS 環境変数を Bun.spawn に渡すよう修正。
+- gopls 連携: `GoplsLspClient` で `gopls serve` を1プロセス起動し JSON-RPC (stdio) で documentSymbol/callHierarchy/references/implementation を通信。`indexUnits` 1回につき1セッション。gopls 未インストール時は空配列にdegrade。
 - Step 7: JSONL は `cache/facts/` ディレクトリの有無で自動判別（ディレクトリ優先）。`readFacts` は後方互換のため JSON フォールバックを維持。インデックスは `cache/index/` に JSON で保存。
 - Step 7: `queryDefs`（name 検索）と `queryRefs` はインデックスがある場合のみ使用し、なければ既存のフルスキャンにフォールバック。
 - Step 8: InsightAdapter インターフェース（外部 AI API 呼び出し）は実装しない設計。Claude Code 自身がスキル定義（.md）を読んで分析を行う。`skills/insights.ts` はコンテキスト準備と query* のみ担当。
+- 参照解析完全化: gopls LSP `textDocument/references` を追加。型参照(type_ref)・フィールドアクセス(field_access)・一般参照(reference)を call 導出の refs に加えて収集。`findEnclosingSymbol` で参照元の関数/メソッドスコープを特定。
+- サードパーティ linter 統合: `diagnose` に staticcheck(-f json)、errcheck(-abspath)、gosec(-fmt=json)、govulncheck(-json) を統合。全てオプションで未インストール時は graceful degrade。
+- 循環依存検出: `detectCyclicDeps` で deps グラフを DFS し循環を検出。`diagnose` 内で常時実行（外部ツール不要）。
+- セキュリティ: gosec（コードレベルのセキュリティ問題）と govulncheck（依存脆弱性）を diagnostics に統合。
+- bootstrap(): LanguageAdapter インターフェースに追加。Go adapter は `go install` で gopls/staticcheck/errcheck/gosec/govulncheck/dupl を自動インストール。doctor() は不足ツールに対して bootstrap ヒントを表示。
+- デッドコード検出: `queryDeadCode()` を query-facts に追加。exported symbol × refs/call_edges のゼロ参照チェック。main/init/TestXxx/interface実装を除外。
+- コード重複検出: Go adapter の `diagnose` に `dupl -plumbing` を統合。重複ブロックを diagnostics として報告。bootstrap 対象にも追加。
+- 共通化候補: Insights スキーマに `DuplicationHint` 型を追加（extract_function/extract_interface/extract_module/parameterize）。`analyze-insights` が dupl diagnostics を手がかりにソースを分析して共通化提案を生成。`queryDuplicationHints()` で取得。
+- バレルエクスポート: ルート `index.ts` を追加。全公開 API を re-export。`package.json` の `module`/`main` フィールドと整合。
+- JSONL デフォルト化: `indexFacts`/`updateFacts` が `writeFactsJsonl` を使用するよう変更。`readFacts` は引き続き JSON/JSONL 両方を自動判別。
+- クエリキャッシュ: `skills/query.ts` に in-process facts キャッシュを追加（30秒 TTL）。同一セッション内での重複ディスク読み込みを回避。`clearFactsCache()` でリセット可能。
+- JSONL 分割読み: `readFactsPartial(cacheDir, fields)` で必要なフィールドだけ読み込み可能。各クエリ関数は必要最小限のフィールドのみロード（例: `queryDeps` → deps のみ、`queryCallers` → call_edges のみ）。キャッシュはフィールド単位で増分マージ。
+- テスト堅牢化: gopls 依存テストに `skipIf(!hasGopls)` を追加。gopls 未インストール環境でも全テストが skip/pass する。

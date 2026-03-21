@@ -42,13 +42,13 @@ export async function runAction(
       let result: ActionResult;
       switch (action) {
         case "format":
-          result = await adapter.format(scope, profile);
+          result = await adapter.format(repoRoot, scope, profile);
           break;
         case "check":
-          result = await adapter.check(scope, profile);
+          result = await adapter.check(repoRoot, scope, profile);
           break;
         case "test":
-          result = await adapter.test(scope, profile);
+          result = await adapter.test(repoRoot, scope, profile);
           break;
       }
       results.push({ lang, action, result });

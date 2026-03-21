@@ -28,6 +28,7 @@ export async function goList(
 
   const result = await exec(["go", "list", "-json", "./..."], {
     cwd: repoRoot,
+    ...(Object.keys(env).length > 0 ? { env } : {}),
   });
 
   if (result.exitCode !== 0) {
@@ -46,8 +47,23 @@ export function parseNDJSON(input: string): GoPackage[] {
   let depth = 0;
   let start = -1;
 
+  let inString = false;
+  let escaped = false;
   for (let i = 0; i < input.length; i++) {
     const ch = input[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\" && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
     if (ch === "{") {
       if (depth === 0) start = i;
       depth++;

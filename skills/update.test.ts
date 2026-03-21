@@ -30,7 +30,7 @@ describe("updateFacts", () => {
     expect(result.ok).toBe(true);
     expect(result.fallbackToIndex).toBe(true);
     expect(result.facts.units.length).toBeGreaterThan(0);
-  });
+  }, 30_000);
 
   test("incrementally updates affected units", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "update-test-"));
@@ -50,7 +50,7 @@ describe("updateFacts", () => {
     expect(result.fallbackToIndex).toBe(false);
     expect(result.affectedUnits).toContain("unit:go:.");
     expect(result.facts.units.length).toBeGreaterThan(0);
-  });
+  }, 30_000);
 
   test("returns no changes for unknown files", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "update-test-"));
@@ -67,5 +67,5 @@ describe("updateFacts", () => {
     expect(result.ok).toBe(true);
     expect(result.fallbackToIndex).toBe(false);
     expect(result.affectedUnits).toHaveLength(0);
-  });
+  }, 30_000);
 });

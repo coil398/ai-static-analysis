@@ -21,11 +21,11 @@ describe("runAction", () => {
     expect(result.results[0]!.action).toBe("check");
   });
 
-  test("format action runs on Go testdata", async () => {
+  test("format action runs on Go testdata with repo scope", async () => {
     const result = await runAction({
       repoRoot: TESTDATA,
       action: "format",
-      scope: { kind: "files", paths: [resolve(TESTDATA, "main.go")] },
+      scope: { kind: "repo" },
     });
 
     expect(result.errors).toHaveLength(0);

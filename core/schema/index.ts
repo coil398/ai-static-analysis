@@ -17,5 +17,6 @@ export type {
   BugSmell,
   PatternTag,
   NamingIssue,
+  DuplicationHint,
   Insights,
 } from "./types.ts";

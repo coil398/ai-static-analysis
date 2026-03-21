@@ -60,7 +60,7 @@ export function applyDelta(facts: Facts, delta: FactsDelta): Facts {
   // Refs: explicit removal + cascade from symbols
   const removedRefs = delta.removed.refs ?? [];
   const removedRefsSet = new Set(
-    removedRefs.map((r) => `${r.from_symbol_id}::${r.to_symbol_id}`),
+    removedRefs.map((r) => `${r.from_symbol_id}::${r.to_symbol_id}::${r.site.file_id}:${r.site.position.line}:${r.site.position.column}`),
   );
   result.refs = result.refs.filter((r) => {
     if (
@@ -68,7 +68,7 @@ export function applyDelta(facts: Facts, delta: FactsDelta): Facts {
       !remainingSymbolIds.has(r.to_symbol_id)
     )
       return false;
-    if (removedRefsSet.has(`${r.from_symbol_id}::${r.to_symbol_id}`))
+    if (removedRefsSet.has(`${r.from_symbol_id}::${r.to_symbol_id}::${r.site.file_id}:${r.site.position.line}:${r.site.position.column}`))
       return false;
     return true;
   });
@@ -92,7 +92,7 @@ export function applyDelta(facts: Facts, delta: FactsDelta): Facts {
   // CallEdges: explicit removal + cascade from symbols
   const removedCallEdges = delta.removed.call_edges ?? [];
   const removedCallEdgesSet = new Set(
-    removedCallEdges.map((e) => `${e.caller_id}::${e.callee_id}`),
+    removedCallEdges.map((e) => `${e.caller_id}::${e.callee_id}::${e.site.file_id}:${e.site.position.line}:${e.site.position.column}`),
   );
   result.call_edges = result.call_edges.filter((e) => {
     if (
@@ -100,7 +100,7 @@ export function applyDelta(facts: Facts, delta: FactsDelta): Facts {
       !remainingSymbolIds.has(e.callee_id)
     )
       return false;
-    if (removedCallEdgesSet.has(`${e.caller_id}::${e.callee_id}`))
+    if (removedCallEdgesSet.has(`${e.caller_id}::${e.callee_id}::${e.site.file_id}:${e.site.position.line}:${e.site.position.column}`))
       return false;
     return true;
   });

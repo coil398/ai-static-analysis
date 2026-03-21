@@ -27,6 +27,7 @@ import {
   queryImpls,
   queryCallers,
   queryCallees,
+  queryDeadCode,
 } from "./skills/query.ts";
 
 const opts = { repoRoot: "/path/to/repo", cacheDir: "/path/to/cache" };
@@ -130,6 +131,20 @@ const { callers } = await queryCallers("sym:go:pkg#func#Create#sig:0", opts);
 const { callees } = await queryCallees("sym:go:pkg#func#Handle#sig:0", opts);
 ```
 
+#### `queryDeadCode(opts) → DeadCodeResult`
+
+エクスポートされたシンボルのうち、参照が0のもの（デッドコード候補）を返す。
+
+```typescript
+const { deadSymbols } = await queryDeadCode(opts);
+// deadSymbols: Array<{ symbol: Symbol, unitId: string }>
+for (const { symbol } of deadSymbols) {
+  console.log(`Dead: ${symbol.name} in ${symbol.decl.file_id}`);
+}
+```
+
+除外対象: `main`, `init`, `TestXxx`/`BenchmarkXxx`/`ExampleXxx`（Go テストエントリポイント）、interface 実装型。
+
 ## 依存
 
 - `core/storage`: facts の読み込み
@@ -151,12 +166,3 @@ const { callees } = await queryCallees("sym:go:pkg#func#Handle#sig:0", opts);
 - `cache/facts.json` 不在: `"No cached facts found. Run index-facts first."` をスロー
 - 不正な unit_id/symbol_id: 空リストを返却
 
-## MVP 制約
-
-現在の Go アダプタは symbols, refs, type_relations, call_edges を空配列で返すため、以下のクエリは空結果になる:
-- `queryDefs` — 名前検索は空
-- `queryRefs` — 参照なし
-- `queryImpls` — 型関係なし
-- `queryCallers` / `queryCallees` — コールグラフなし
-
-gopls 統合後に有効になる。

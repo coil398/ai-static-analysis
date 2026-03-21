@@ -172,7 +172,21 @@ export interface PatternTag {
   meta: InsightMeta;
 }
 
-// §14.6 Naming quality
+// §14.6 Duplication / commonization hints
+export interface DuplicationHint {
+  /** Symbol or unit IDs of the similar code fragments */
+  target_ids: string[];
+  target_kind: "symbol" | "unit" | "file";
+  /** "extract_function" | "extract_interface" | "extract_module" | "parameterize" */
+  suggestion: "extract_function" | "extract_interface" | "extract_module" | "parameterize" | "other";
+  /** Human-readable description of what is similar and how to consolidate */
+  message: string;
+  /** Estimated lines of code that could be saved */
+  estimated_savings?: number;
+  meta: InsightMeta;
+}
+
+// §14.7 Naming quality
 export interface NamingIssue {
   symbol_id: string;
   issue:
@@ -199,6 +213,7 @@ export interface Insights {
   bug_smells: BugSmell[];
   pattern_tags: PatternTag[];
   naming_issues: NamingIssue[];
+  duplication_hints: DuplicationHint[];
 }
 
 // Diff delta for incremental updates (§7.1)
