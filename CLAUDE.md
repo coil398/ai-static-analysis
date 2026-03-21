@@ -63,7 +63,7 @@
 - Step 5-6: skills 層は `createRegistry()` で毎回新しいレジストリを生成する設計。将来 DI に変えるなら引数に渡す形に変更する。
 - Step 5-6→修正済: Go adapter の cwd 問題を解決。ActionAdapter インターフェースに `repoRoot` を第一引数として追加。unit scope の unitId から `unit:go:` プレフィックスを除去してパスを抽出するよう修正。
 - Go adapter: `exec()` に `env` パラメータを追加し、`goList()` で GOOS/GOARCH/GOTAGS 環境変数を Bun.spawn に渡すよう修正。
-- gopls 連携: `gopls symbols`/`call_hierarchy`/`implementation` CLI を使って symbols/refs/call_edges/type_relations を取得。gopls 未インストール時は空配列にdegrade。現在はコマンドごとにプロセス spawn するため大規模リポではパフォーマンス課題あり（将来 LSP サーバーモードに移行予定）。
+- gopls 連携: `GoplsLspClient` で `gopls serve` を1プロセス起動し JSON-RPC (stdio) で documentSymbol/callHierarchy/references/implementation を通信。`indexUnits` 1回につき1セッション。gopls 未インストール時は空配列にdegrade。
 - Step 7: JSONL は `cache/facts/` ディレクトリの有無で自動判別（ディレクトリ優先）。`readFacts` は後方互換のため JSON フォールバックを維持。インデックスは `cache/index/` に JSON で保存。
 - Step 7: `queryDefs`（name 検索）と `queryRefs` はインデックスがある場合のみ使用し、なければ既存のフルスキャンにフォールバック。
 - Step 8: InsightAdapter インターフェース（外部 AI API 呼び出し）は実装しない設計。Claude Code 自身がスキル定義（.md）を読んで分析を行う。`skills/insights.ts` はコンテキスト準備と query* のみ担当。

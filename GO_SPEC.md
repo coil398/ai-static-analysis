@@ -188,8 +188,7 @@ callee[N]: ranges <line>:<col>-<endCol> in <file> from/to function <name> in <fi
 
 ### 10.4 パフォーマンス考慮
 
-現在は各コマンド呼び出しで gopls プロセスを起動するため、ファイル数×シンボル数に比例した起動コストが発生する。
-将来的には `gopls serve` で LSP サーバーを1プロセス起動し、JSON-RPC で通信する方式に移行してパフォーマンスを改善する。
+`GoplsLspClient` が `gopls serve` で LSP サーバーを1プロセス起動し、JSON-RPC (stdio) で全リクエストを処理する。`indexUnits` 1回につき1セッション（initialize → 全リクエスト → shutdown）。プロセス起動コストは1回のみ。
 
 ## 11. 実装状態サマリ
 
