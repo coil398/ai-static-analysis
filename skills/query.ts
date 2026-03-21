@@ -11,7 +11,7 @@ import type {
   TypeRelation,
   CallEdge,
 } from "../core/schema/types.ts";
-import { readFacts, readFactsPartial } from "../core/storage/index.ts";
+import { readFactsPartial } from "../core/storage/index.ts";
 import type { FactsField } from "../core/storage/index.ts";
 import { impactUnits } from "../core/diff/index.ts";
 import {
@@ -145,14 +145,6 @@ async function loadFactsFields(
     loadedAt: Date.now(),
   });
   return facts;
-}
-
-/** Load all fields (for queries that need everything or legacy fallback). */
-async function loadFacts(opts: QueryOptions): Promise<Facts> {
-  return loadFactsFields(opts, [
-    "units", "files", "deps", "symbols", "refs",
-    "type_relations", "call_edges", "diagnostics",
-  ]);
 }
 
 // --- Query functions ---

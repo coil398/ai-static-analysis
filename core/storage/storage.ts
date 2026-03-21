@@ -96,8 +96,7 @@ export async function readFactsPartial(
 ): Promise<Facts | null> {
   const factsDir = join(cacheDir, FACTS_DIR);
   if (!(await dirExists(factsDir))) {
-    // Legacy JSON — no partial read possible, load everything
-    return readJson<Facts>(join(cacheDir, FACTS_FILE));
+    return null;
   }
 
   const meta = await readJson<Pick<Facts, "schema_version" | "snapshot" | "meta">>(
