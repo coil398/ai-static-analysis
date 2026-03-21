@@ -265,6 +265,21 @@ export class GoplsLspClient {
     return (result as LspLocation[] | null) ?? [];
   }
 
+  async references(
+    relPath: string,
+    line: number,
+    character: number,
+    includeDeclaration = false,
+  ): Promise<LspLocation[]> {
+    await this.ensureStarted();
+    const result = await this.sendRequest("textDocument/references", {
+      textDocument: { uri: this.fileUri(relPath) },
+      position: { line, character },
+      context: { includeDeclaration },
+    });
+    return (result as LspLocation[] | null) ?? [];
+  }
+
   async shutdown(): Promise<void> {
     if (!this.proc || !this.initialized) return;
     try {

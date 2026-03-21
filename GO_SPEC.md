@@ -199,9 +199,15 @@ callee[N]: ranges <line>:<col>-<endCol> in <file> from/to function <name> in <fi
 | `doctor` | 実装済 | go, gopls 存在確認 |
 | `enumerateUnits` | 実装済 | `go list -json` |
 | `indexUnits` (units/files/deps) | 実装済 | `go list -json` |
-| `indexUnits` (symbols) | 実装済 | `gopls symbols` |
-| `indexUnits` (refs) | 実装済 | `gopls call_hierarchy` から導出 |
-| `indexUnits` (call_edges) | 実装済 | `gopls call_hierarchy` |
-| `indexUnits` (type_relations) | 実装済 | `gopls implementation` |
-| `diagnose` | 実装済 | `go vet` |
+| `indexUnits` (symbols) | 実装済 | `gopls` LSP `documentSymbol` |
+| `indexUnits` (refs: call) | 実装済 | `gopls` LSP `callHierarchy` から導出 |
+| `indexUnits` (refs: type_ref/field_access) | 実装済 | `gopls` LSP `textDocument/references` |
+| `indexUnits` (call_edges) | 実装済 | `gopls` LSP `callHierarchy` |
+| `indexUnits` (type_relations) | 実装済 | `gopls` LSP `implementation` |
+| `diagnose` (go vet) | 実装済 | `go vet` |
+| `diagnose` (staticcheck) | 実装済 | `staticcheck -f json`（オプション、未インストール時degrade） |
+| `diagnose` (errcheck) | 実装済 | `errcheck -abspath`（オプション、未インストール時degrade） |
+| `diagnose` (循環依存検出) | 実装済 | deps グラフ DFS（常時実行） |
+| `diagnose` (gosec) | 実装済 | `gosec -fmt=json`（オプション、未インストール時degrade） |
+| `diagnose` (govulncheck) | 実装済 | `govulncheck -json`（オプション、未インストール時degrade） |
 | ActionAdapter | 実装済 | `go fmt` / `go build` + `go vet` / `go test` |

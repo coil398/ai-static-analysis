@@ -1,6 +1,14 @@
 import { describe, test, expect } from "bun:test";
 import { resolve } from "node:path";
-import { GoLanguageAdapter, parseVetOutput } from "./language-adapter.ts";
+import {
+  GoLanguageAdapter,
+  parseVetOutput,
+  parseStaticcheckOutput,
+  parseErrcheckOutput,
+  parseGosecOutput,
+  parseGovulncheckOutput,
+  detectCyclicDeps,
+} from "./language-adapter.ts";
 
 const TESTDATA = resolve(import.meta.dir, "testdata");
 
@@ -169,6 +177,29 @@ describe("GoLanguageAdapter", () => {
     }
   }, 30_000);
 
+  test("indexUnits produces non-call refs (type_ref, field_access)", async () => {
+    const units = await adapter.enumerateUnits(TESTDATA, {});
+    const delta = await adapter.indexUnits(units, {});
+
+    const refs = delta.added.refs ?? [];
+
+    // Should have more refs than just call-derived ones
+    const callRefs = refs.filter((r) => r.kind === "call");
+    const nonCallRefs = refs.filter((r) => r.kind !== "call");
+    expect(nonCallRefs.length).toBeGreaterThan(0);
+
+    // Should have type_ref or field_access refs
+    const refKinds = new Set(refs.map((r) => r.kind));
+    expect(
+      refKinds.has("type_ref") || refKinds.has("field_access") || refKinds.has("reference"),
+    ).toBe(true);
+
+    // All non-call refs should have certain confidence
+    for (const ref of nonCallRefs) {
+      expect(ref.confidence).toBe("certain");
+    }
+  }, 30_000);
+
   test("indexUnits produces type_relations via gopls", async () => {
     const units = await adapter.enumerateUnits(TESTDATA, {});
     const delta = await adapter.indexUnits(units, {});
@@ -186,11 +217,16 @@ describe("GoLanguageAdapter", () => {
     expect(storeImplsStorer).toBeDefined();
   }, 30_000);
 
-  test("diagnose runs go vet without errors on clean code", async () => {
+  test("diagnose runs go vet and detects no issues on clean code", async () => {
     const units = await adapter.enumerateUnits(TESTDATA, {});
     const diags = await adapter.diagnose(units, {});
-    expect(diags).toEqual([]);
-  });
+    // Clean testdata: no go vet issues, no cycles, optional linters may or may not be installed
+    const vetDiags = diags.filter((d) => d.tool === "go_vet");
+    expect(vetDiags).toEqual([]);
+    // No circular deps in testdata
+    const cycleDiags = diags.filter((d) => d.tool === "cycle_detector");
+    expect(cycleDiags).toEqual([]);
+  }, 30_000);
 });
 
 describe("parseVetOutput", () => {
@@ -219,5 +255,158 @@ internal/handler/user.go:50: unreachable code
 
   test("returns empty for clean output", () => {
     expect(parseVetOutput("", "/repo")).toEqual([]);
+  });
+});
+
+describe("parseStaticcheckOutput", () => {
+  test("parses JSON lines output", () => {
+    const stdout = `{"code":"SA1000","severity":"error","location":{"file":"/repo/main.go","line":10,"column":5},"message":"invalid regexp"}
+{"code":"S1000","severity":"warning","location":{"file":"/repo/pkg/util.go","line":20,"column":1},"message":"should use for range"}`;
+    const diags = parseStaticcheckOutput(stdout, "/repo");
+    expect(diags).toHaveLength(2);
+    expect(diags[0]).toEqual({
+      file_id: "file:main.go",
+      position: { line: 10, column: 5 },
+      severity: "error",
+      message: "SA1000: invalid regexp",
+      tool: "staticcheck",
+    });
+    expect(diags[1]!.severity).toBe("warning");
+    expect(diags[1]!.tool).toBe("staticcheck");
+  });
+
+  test("handles empty output", () => {
+    expect(parseStaticcheckOutput("", "/repo")).toEqual([]);
+  });
+});
+
+describe("parseErrcheckOutput", () => {
+  test("parses errcheck -abspath output", () => {
+    const stdout = `/repo/main.go:42:12:\tfmt.Fprintf(os.Stderr, "error")
+/repo/pkg/handler.go:10:2:\tdb.Close()`;
+    const diags = parseErrcheckOutput(stdout, "/repo");
+    expect(diags).toHaveLength(2);
+    expect(diags[0]).toEqual({
+      file_id: "file:main.go",
+      position: { line: 42, column: 12 },
+      severity: "warning",
+      message: 'unchecked error: fmt.Fprintf(os.Stderr, "error")',
+      tool: "errcheck",
+    });
+    expect(diags[1]!.file_id).toBe("file:pkg/handler.go");
+  });
+
+  test("skips files outside repo", () => {
+    const stdout = `/other/repo/main.go:1:1:\tfoo()`;
+    const diags = parseErrcheckOutput(stdout, "/repo");
+    expect(diags).toEqual([]);
+  });
+});
+
+describe("detectCyclicDeps", () => {
+  test("detects simple cycle", () => {
+    const deps = [
+      { from_unit_id: "unit:go:a", to_unit_id: "unit:go:b", kind: "import" },
+      { from_unit_id: "unit:go:b", to_unit_id: "unit:go:a", kind: "import" },
+    ];
+    const diags = detectCyclicDeps(deps);
+    expect(diags).toHaveLength(1);
+    expect(diags[0]!.tool).toBe("cycle_detector");
+    expect(diags[0]!.message).toContain("circular dependency detected");
+    expect(diags[0]!.message).toContain("a");
+    expect(diags[0]!.message).toContain("b");
+  });
+
+  test("detects transitive cycle", () => {
+    const deps = [
+      { from_unit_id: "unit:go:a", to_unit_id: "unit:go:b", kind: "import" },
+      { from_unit_id: "unit:go:b", to_unit_id: "unit:go:c", kind: "import" },
+      { from_unit_id: "unit:go:c", to_unit_id: "unit:go:a", kind: "import" },
+    ];
+    const diags = detectCyclicDeps(deps);
+    expect(diags).toHaveLength(1);
+    expect(diags[0]!.message).toContain("circular dependency detected");
+  });
+
+  test("returns empty for acyclic graph", () => {
+    const deps = [
+      { from_unit_id: "unit:go:a", to_unit_id: "unit:go:b", kind: "import" },
+      { from_unit_id: "unit:go:b", to_unit_id: "unit:go:c", kind: "import" },
+    ];
+    const diags = detectCyclicDeps(deps);
+    expect(diags).toEqual([]);
+  });
+});
+
+describe("parseGosecOutput", () => {
+  test("parses gosec JSON output", () => {
+    const stdout = JSON.stringify({
+      Issues: [
+        {
+          severity: "HIGH",
+          confidence: "HIGH",
+          rule_id: "G101",
+          details: "Potential hardcoded credentials",
+          file: "config/secrets.go",
+          line: "15",
+          column: "10",
+        },
+        {
+          severity: "MEDIUM",
+          confidence: "MEDIUM",
+          rule_id: "G304",
+          details: "File path provided as taint input",
+          file: "handler/file.go",
+          line: "30",
+          column: "1",
+        },
+      ],
+    });
+    const diags = parseGosecOutput(stdout, "/repo");
+    expect(diags).toHaveLength(2);
+    expect(diags[0]).toEqual({
+      file_id: "file:config/secrets.go",
+      position: { line: 15, column: 10 },
+      severity: "error",
+      message: "G101: Potential hardcoded credentials",
+      tool: "gosec",
+    });
+    expect(diags[1]!.severity).toBe("warning");
+  });
+
+  test("handles empty/malformed output", () => {
+    expect(parseGosecOutput("", "/repo")).toEqual([]);
+    expect(parseGosecOutput("{}", "/repo")).toEqual([]);
+  });
+});
+
+describe("parseGovulncheckOutput", () => {
+  test("parses govulncheck JSON output", () => {
+    const lines = [
+      JSON.stringify({ osv: { id: "GO-2024-1234", summary: "SQL injection in database/sql" } }),
+      JSON.stringify({ osv: { id: "GO-2024-5678", summary: "Path traversal in net/http" } }),
+    ].join("\n");
+    const diags = parseGovulncheckOutput(lines, "/repo");
+    expect(diags).toHaveLength(2);
+    expect(diags[0]).toEqual({
+      file_id: "file:go.mod",
+      position: { line: 1, column: 1 },
+      severity: "error",
+      message: "GO-2024-1234: SQL injection in database/sql",
+      tool: "govulncheck",
+    });
+  });
+
+  test("deduplicates by message", () => {
+    const lines = [
+      JSON.stringify({ osv: { id: "GO-2024-1234", summary: "same vuln" } }),
+      JSON.stringify({ osv: { id: "GO-2024-1234", summary: "same vuln" } }),
+    ].join("\n");
+    const diags = parseGovulncheckOutput(lines, "/repo");
+    expect(diags).toHaveLength(1);
+  });
+
+  test("handles empty output", () => {
+    expect(parseGovulncheckOutput("", "/repo")).toEqual([]);
   });
 });

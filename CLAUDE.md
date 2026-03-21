@@ -66,3 +66,7 @@
 - Step 7: JSONL は `cache/facts/` ディレクトリの有無で自動判別（ディレクトリ優先）。`readFacts` は後方互換のため JSON フォールバックを維持。インデックスは `cache/index/` に JSON で保存。
 - Step 7: `queryDefs`（name 検索）と `queryRefs` はインデックスがある場合のみ使用し、なければ既存のフルスキャンにフォールバック。
 - Step 8: InsightAdapter インターフェース（外部 AI API 呼び出し）は実装しない設計。Claude Code 自身がスキル定義（.md）を読んで分析を行う。`skills/insights.ts` はコンテキスト準備と query* のみ担当。
+- 参照解析完全化: gopls LSP `textDocument/references` を追加。型参照(type_ref)・フィールドアクセス(field_access)・一般参照(reference)を call 導出の refs に加えて収集。`findEnclosingSymbol` で参照元の関数/メソッドスコープを特定。
+- サードパーティ linter 統合: `diagnose` に staticcheck(-f json)、errcheck(-abspath)、gosec(-fmt=json)、govulncheck(-json) を統合。全てオプションで未インストール時は graceful degrade。
+- 循環依存検出: `detectCyclicDeps` で deps グラフを DFS し循環を検出。`diagnose` 内で常時実行（外部ツール不要）。
+- セキュリティ: gosec（コードレベルのセキュリティ問題）と govulncheck（依存脆弱性）を diagnostics に統合。

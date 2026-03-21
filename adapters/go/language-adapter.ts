@@ -23,6 +23,7 @@ import {
   goplsSymbols,
   goplsCallHierarchy,
   goplsImplementation,
+  goplsReferences,
   type GoplsSymbol,
 } from "./gopls.ts";
 import { GoplsLspClient } from "./lsp-client.ts";
@@ -279,6 +280,74 @@ export class GoLanguageAdapter implements LanguageAdapter {
       }
     }
 
+    // 2b. Collect non-call references via textDocument/references
+    // Query references for types, interfaces, and exported fields
+    const refTargetSymbols = [
+      ...interfaceSymbols,
+      ...symbols
+        .filter((s) => s.kind === "struct" || s.kind === "field" || s.kind === "variable" || s.kind === "constant")
+        .map((s) => {
+          const pos = s.decl.position;
+          const relPath = s.decl.file_id.replace(/^file:/, "");
+          return { symbol: s, relPath, line: pos.line, col: pos.column };
+        }),
+    ];
+
+    // Collect a set of call-ref keys to avoid duplicates
+    const callRefKeys = new Set(
+      refs.map((r) => `${r.to_symbol_id}@${r.site.file_id}:${r.site.position.line}:${r.site.position.column}`),
+    );
+
+    // Build a reverse lookup: absPath → { relPath, symbols at that position }
+    const symbolByAbsPos = new Map<string, Symbol>();
+    for (const [key, sym] of symbolByPos) {
+      const [relP, ln, cl] = key.split(":");
+      const absPath = resolve(repoRoot, relP!);
+      symbolByAbsPos.set(`${absPath}:${ln}:${cl}`, sym);
+    }
+
+    for (const { symbol: targetSym, relPath: tRelPath, line: tLine, col: tCol } of refTargetSymbols) {
+      let refLocs: Awaited<ReturnType<typeof goplsReferences>>;
+      try {
+        refLocs = await goplsReferences(tRelPath, tLine, tCol, repoRoot, client);
+      } catch {
+        continue;
+      }
+
+      for (const loc of refLocs) {
+        // Skip the declaration itself
+        const locRelPath = relative(repoRoot, loc.file);
+        if (locRelPath === tRelPath && loc.line === tLine && loc.col === tCol) continue;
+
+        const fileId = `file:${locRelPath}`;
+
+        // Skip if already covered by a call-derived ref
+        const refKey = `${targetSym.id}@${fileId}:${loc.line}:${loc.col}`;
+        if (callRefKeys.has(refKey)) continue;
+
+        // Determine the referring symbol (the one whose scope contains this location)
+        // Find the closest function/method that contains this reference site
+        const fromSymbol = this.findEnclosingSymbol(symbols, fileId, loc.line);
+
+        const kind = targetSym.kind === "interface" || targetSym.kind === "struct"
+          ? "type_ref"
+          : targetSym.kind === "field"
+            ? "field_access"
+            : "reference";
+
+        refs.push({
+          from_symbol_id: fromSymbol?.id ?? `file_scope:${locRelPath}`,
+          to_symbol_id: targetSym.id,
+          site: {
+            file_id: fileId,
+            position: { line: loc.line, column: loc.col },
+          },
+          kind,
+          confidence: "certain",
+        });
+      }
+    }
+
     // 3. Collect type relations (implementations)
     for (const { symbol, relPath, line, col } of interfaceSymbols) {
       if (symbol.kind !== "interface") continue;
@@ -328,6 +397,28 @@ export class GoLanguageAdapter implements LanguageAdapter {
     };
   }
 
+  /**
+   * Find the enclosing function/method symbol for a given file position.
+   * Returns the most specific (closest line) function that declares before the given line.
+   */
+  private findEnclosingSymbol(
+    symbols: Symbol[],
+    fileId: string,
+    line: number,
+  ): Symbol | null {
+    let best: Symbol | null = null;
+    let bestLine = -1;
+    for (const sym of symbols) {
+      if (sym.decl.file_id !== fileId) continue;
+      if (sym.kind !== "function" && sym.kind !== "method") continue;
+      if (sym.decl.position.line <= line && sym.decl.position.line > bestLine) {
+        best = sym;
+        bestLine = sym.decl.position.line;
+      }
+    }
+    return best;
+  }
+
   private mapSymbolKind(goplsKind: string): string {
     const map: Record<string, string> = {
       Function: "function",
@@ -355,10 +446,100 @@ export class GoLanguageAdapter implements LanguageAdapter {
     const repoRoot = units[0]?.metadata?.["repo_root"] as string | undefined;
     if (!repoRoot) return [];
 
-    const result = await exec(["go", "vet", "./..."], { cwd: repoRoot });
-    if (result.exitCode === 0 && !result.stderr) return [];
+    const diagnostics: Diagnostic[] = [];
 
-    return parseVetOutput(result.stderr, repoRoot);
+    // 1. go vet (always available)
+    const vetResult = await exec(["go", "vet", "./..."], { cwd: repoRoot });
+    if (vetResult.exitCode !== 0 || vetResult.stderr) {
+      diagnostics.push(...parseVetOutput(vetResult.stderr, repoRoot));
+    }
+
+    // 2. staticcheck (optional, graceful degradation)
+    if (await whichTool("staticcheck")) {
+      const scResult = await exec(
+        ["staticcheck", "-f", "json", "./..."],
+        { cwd: repoRoot },
+      );
+      // staticcheck returns exit 1 when diagnostics found, but still produces valid output
+      if (scResult.stdout) {
+        diagnostics.push(...parseStaticcheckOutput(scResult.stdout, repoRoot));
+      }
+    }
+
+    // 3. errcheck (optional, graceful degradation)
+    if (await whichTool("errcheck")) {
+      const ecResult = await exec(
+        ["errcheck", "-abspath", "./..."],
+        { cwd: repoRoot },
+      );
+      if (ecResult.exitCode !== 0 && ecResult.stdout) {
+        diagnostics.push(...parseErrcheckOutput(ecResult.stdout, repoRoot));
+      }
+    }
+
+    // 4. Circular dependency detection from deps
+    const allUnits = await this.enumerateUnits(repoRoot, _profile);
+    const allDelta = await this.buildDepsOnly(allUnits, repoRoot, _profile);
+    diagnostics.push(...detectCyclicDeps(allDelta));
+
+    // 5. gosec (optional, graceful degradation)
+    if (await whichTool("gosec")) {
+      const gsResult = await exec(
+        ["gosec", "-fmt=json", "-quiet", "./..."],
+        { cwd: repoRoot },
+      );
+      if (gsResult.stdout) {
+        diagnostics.push(...parseGosecOutput(gsResult.stdout, repoRoot));
+      }
+    }
+
+    // 6. govulncheck (optional, graceful degradation)
+    if (await whichTool("govulncheck")) {
+      const gvResult = await exec(
+        ["govulncheck", "-json", "./..."],
+        { cwd: repoRoot },
+      );
+      if (gvResult.stdout) {
+        diagnostics.push(...parseGovulncheckOutput(gvResult.stdout, repoRoot));
+      }
+    }
+
+    return diagnostics;
+  }
+
+  /**
+   * Build deps only (lightweight, for cycle detection).
+   */
+  private async buildDepsOnly(
+    units: Unit[],
+    repoRoot: string,
+    profile: Record<string, string>,
+  ): Promise<Dep[]> {
+    const packages = await goList(repoRoot, profile);
+    const pkgByImportPath = new Map<string, GoPackage>();
+    for (const p of packages) {
+      pkgByImportPath.set(p.ImportPath, p);
+    }
+    const modulePath = packages[0]?.Module?.Path;
+    const unitIds = new Set(units.map((u) => u.id));
+    const deps: Dep[] = [];
+
+    for (const unit of units) {
+      const importPath = unit.metadata?.["import_path"] as string | undefined;
+      const pkg = importPath ? pkgByImportPath.get(importPath) : undefined;
+      if (!pkg) continue;
+      for (const imp of pkg.Imports ?? []) {
+        if (!modulePath || !imp.startsWith(modulePath)) continue;
+        const depPkg = pkgByImportPath.get(imp);
+        if (!depPkg || depPkg.Standard) continue;
+        const depRelPath = relative(repoRoot, depPkg.Dir);
+        const depUnitId = `unit:go:${depRelPath}`;
+        if (unitIds.has(depUnitId)) {
+          deps.push({ from_unit_id: unit.id, to_unit_id: depUnitId, kind: "import" });
+        }
+      }
+    }
+    return deps;
   }
 
   private packageToUnit(pkg: GoPackage, repoRoot: string): Unit {
@@ -411,4 +592,218 @@ export function parseVetOutput(
     });
   }
   return diagnostics;
+}
+
+/**
+ * Parse staticcheck JSON output (one JSON object per line).
+ * Format: {"code":"SA1000","severity":"error","location":{"file":"...","line":1,"column":1},"message":"..."}
+ */
+export function parseStaticcheckOutput(
+  stdout: string,
+  repoRoot: string,
+): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
+  for (const line of stdout.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line);
+      if (!entry.location?.file) continue;
+      const relPath = relative(repoRoot, entry.location.file);
+      const severity = entry.severity === "error" ? "error" as const
+        : entry.severity === "info" ? "info" as const
+        : "warning" as const;
+      diagnostics.push({
+        file_id: `file:${relPath}`,
+        position: {
+          line: entry.location.line ?? 1,
+          column: entry.location.column ?? 1,
+        },
+        severity,
+        message: `${entry.code}: ${entry.message}`,
+        tool: "staticcheck",
+      });
+    } catch {
+      // Skip malformed lines
+    }
+  }
+  return diagnostics;
+}
+
+/**
+ * Parse errcheck output.
+ * Format (with -abspath): /absolute/path/to/file.go:42:12:\tfmt.Fprintf(...)
+ */
+export function parseErrcheckOutput(
+  stdout: string,
+  repoRoot: string,
+): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
+  const re = /^(.+?):(\d+):(\d+):\t(.+)$/;
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const match = re.exec(trimmed);
+    if (!match) continue;
+    const [, filePath, lineStr, colStr, expr] = match;
+    if (!filePath || !lineStr) continue;
+    const relPath = relative(repoRoot, filePath);
+    // Skip files outside our repo
+    if (relPath.startsWith("..")) continue;
+    diagnostics.push({
+      file_id: `file:${relPath}`,
+      position: {
+        line: parseInt(lineStr, 10),
+        column: colStr ? parseInt(colStr, 10) : 1,
+      },
+      severity: "warning",
+      message: `unchecked error: ${expr ?? ""}`.trim(),
+      tool: "errcheck",
+    });
+  }
+  return diagnostics;
+}
+
+/**
+ * Detect circular dependencies in the dep graph using DFS.
+ * Returns diagnostics for each cycle found.
+ */
+export function detectCyclicDeps(deps: Dep[]): Diagnostic[] {
+  // Build adjacency list
+  const adj = new Map<string, string[]>();
+  for (const dep of deps) {
+    const existing = adj.get(dep.from_unit_id);
+    if (existing) {
+      existing.push(dep.to_unit_id);
+    } else {
+      adj.set(dep.from_unit_id, [dep.to_unit_id]);
+    }
+  }
+
+  const diagnostics: Diagnostic[] = [];
+  const visited = new Set<string>();
+  const inStack = new Set<string>();
+  const reportedCycles = new Set<string>();
+
+  function dfs(node: string, path: string[]): void {
+    if (inStack.has(node)) {
+      // Found a cycle — extract the cycle portion
+      const cycleStart = path.indexOf(node);
+      if (cycleStart === -1) return;
+      const cycle = path.slice(cycleStart);
+      cycle.push(node);
+      // Normalize cycle key to avoid duplicate reports
+      const cycleKey = [...cycle].sort().join(" -> ");
+      if (reportedCycles.has(cycleKey)) return;
+      reportedCycles.add(cycleKey);
+      diagnostics.push({
+        file_id: `unit:${cycle[0]!}`,
+        position: { line: 0, column: 0 },
+        severity: "warning",
+        message: `circular dependency detected: ${cycle.map((u) => u.replace(/^unit:go:/, "")).join(" -> ")}`,
+        tool: "cycle_detector",
+      });
+      return;
+    }
+    if (visited.has(node)) return;
+
+    visited.add(node);
+    inStack.add(node);
+    path.push(node);
+
+    for (const neighbor of adj.get(node) ?? []) {
+      dfs(neighbor, path);
+    }
+
+    path.pop();
+    inStack.delete(node);
+  }
+
+  for (const node of adj.keys()) {
+    dfs(node, []);
+  }
+
+  return diagnostics;
+}
+
+/**
+ * Parse gosec JSON output.
+ * gosec -fmt=json outputs: {"Issues":[{"severity":"HIGH","confidence":"HIGH","rule_id":"G101","details":"...","file":"...","line":"42","column":"12"},...]}
+ */
+export function parseGosecOutput(
+  stdout: string,
+  repoRoot: string,
+): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
+  try {
+    const data = JSON.parse(stdout);
+    const issues = data?.Issues ?? data?.issues ?? [];
+    for (const issue of issues) {
+      if (!issue.file) continue;
+      const relPath = relative(repoRoot, resolve(repoRoot, issue.file));
+      if (relPath.startsWith("..")) continue;
+      const severity = issue.severity === "HIGH" ? "error" as const
+        : issue.severity === "MEDIUM" ? "warning" as const
+        : "info" as const;
+      diagnostics.push({
+        file_id: `file:${relPath}`,
+        position: {
+          line: parseInt(issue.line ?? "1", 10),
+          column: parseInt(issue.column ?? "1", 10),
+        },
+        severity,
+        message: `${issue.rule_id ?? "gosec"}: ${issue.details ?? issue.description ?? "security issue"}`,
+        tool: "gosec",
+      });
+    }
+  } catch {
+    // Malformed JSON — skip
+  }
+  return diagnostics;
+}
+
+/**
+ * Parse govulncheck JSON output.
+ * govulncheck -json outputs a stream of JSON objects. We look for "vulnerability" entries.
+ */
+export function parseGovulncheckOutput(
+  stdout: string,
+  _repoRoot: string,
+): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
+  // govulncheck JSON output contains one JSON message per object
+  // We look for "finding" objects which indicate vulnerabilities
+  try {
+    // govulncheck outputs newline-delimited JSON messages
+    for (const line of stdout.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const msg = JSON.parse(line);
+        // govulncheck v1 format: {"vulnerability": {...}} or {"finding": {...}}
+        const vuln = msg.osv ?? msg.vulnerability;
+        if (vuln) {
+          const id = vuln.id ?? "UNKNOWN";
+          const summary = vuln.summary ?? vuln.details ?? "known vulnerability";
+          diagnostics.push({
+            file_id: "file:go.mod",
+            position: { line: 1, column: 1 },
+            severity: "error",
+            message: `${id}: ${summary}`,
+            tool: "govulncheck",
+          });
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+  } catch {
+    // Malformed output
+  }
+
+  // Deduplicate by message
+  const seen = new Set<string>();
+  return diagnostics.filter((d) => {
+    if (seen.has(d.message)) return false;
+    seen.add(d.message);
+    return true;
+  });
 }

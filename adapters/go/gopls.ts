@@ -173,6 +173,31 @@ export async function goplsCallHierarchy(
   return result;
 }
 
+export async function goplsReferences(
+  filePath: string,
+  line: number,
+  col: number,
+  cwd: string,
+  client?: GoplsLspClient,
+): Promise<GoplsLocation[]> {
+  if (!client) {
+    const tmpClient = new GoplsLspClient(cwd);
+    try {
+      return await goplsReferences(filePath, line, col, cwd, tmpClient);
+    } finally {
+      await tmpClient.shutdown();
+    }
+  }
+
+  const locs = await client.references(filePath, line - 1, col - 1);
+  return locs.map((loc) => ({
+    file: GoplsLspClient.uriToPath(loc.uri),
+    line: loc.range.start.line + 1,
+    col: loc.range.start.character + 1,
+    endCol: loc.range.end.character + 1,
+  }));
+}
+
 export async function goplsImplementation(
   filePath: string,
   line: number,
