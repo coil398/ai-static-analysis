@@ -70,3 +70,4 @@
 - サードパーティ linter 統合: `diagnose` に staticcheck(-f json)、errcheck(-abspath)、gosec(-fmt=json)、govulncheck(-json) を統合。全てオプションで未インストール時は graceful degrade。
 - 循環依存検出: `detectCyclicDeps` で deps グラフを DFS し循環を検出。`diagnose` 内で常時実行（外部ツール不要）。
 - セキュリティ: gosec（コードレベルのセキュリティ問題）と govulncheck（依存脆弱性）を diagnostics に統合。
+- bootstrap(): LanguageAdapter インターフェースに追加。Go adapter は `go install` で gopls/staticcheck/errcheck/gosec/govulncheck を自動インストール。doctor() は不足ツールに対して bootstrap ヒントを表示。

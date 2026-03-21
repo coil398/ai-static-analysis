@@ -5,6 +5,7 @@ import type {
   LanguageAdapter,
   DetectResult,
   DoctorResult,
+  BootstrapResult,
 } from "../../core/adapter/types.ts";
 import type {
   Unit,
@@ -49,15 +50,91 @@ export class GoLanguageAdapter implements LanguageAdapter {
       if (ver.exitCode === 0) notes.push(ver.stdout);
     }
 
-    const goplsPath = await whichTool("gopls");
-    if (!goplsPath) {
-      notes.push("gopls not found (optional, needed for symbols/refs)");
-    } else {
-      const ver = await exec(["gopls", "version"]);
-      if (ver.exitCode === 0) notes.push(`gopls: ${ver.stdout.split("\n")[0]}`);
+    // Check optional tools (all installable via bootstrap())
+    const optionalTools: Array<{ name: string; purpose: string }> = [
+      { name: "gopls", purpose: "symbols/refs/call_edges/type_relations" },
+      { name: "staticcheck", purpose: "advanced static analysis" },
+      { name: "errcheck", purpose: "unchecked error detection" },
+      { name: "gosec", purpose: "security analysis" },
+      { name: "govulncheck", purpose: "dependency vulnerability scanning" },
+    ];
+
+    const missingOptional: string[] = [];
+    for (const { name, purpose } of optionalTools) {
+      const toolPath = await whichTool(name);
+      if (!toolPath) {
+        missingOptional.push(name);
+        notes.push(`${name} not found (optional, needed for ${purpose})`);
+      } else {
+        if (name === "gopls") {
+          const ver = await exec(["gopls", "version"]);
+          if (ver.exitCode === 0) notes.push(`gopls: ${ver.stdout.split("\n")[0]}`);
+        } else {
+          notes.push(`${name}: available`);
+        }
+      }
+    }
+
+    if (missingOptional.length > 0 && goPath) {
+      notes.push(`Run bootstrap() to install: ${missingOptional.join(", ")}`);
     }
 
     return { ok: missing.length === 0, missing_tools: missing, notes };
+  }
+
+  // Go tools installable via `go install`
+  private static readonly GO_TOOLS: Record<string, string> = {
+    gopls: "golang.org/x/tools/gopls@latest",
+    staticcheck: "honnef.co/go/tools/cmd/staticcheck@latest",
+    errcheck: "github.com/kisielk/errcheck@latest",
+    gosec: "github.com/securego/gosec/v2/cmd/gosec@latest",
+    govulncheck: "golang.org/x/vuln/cmd/govulncheck@latest",
+  };
+
+  async bootstrap(): Promise<BootstrapResult> {
+    const installed: string[] = [];
+    const failed: Array<{ tool: string; reason: string }> = [];
+    const notes: string[] = [];
+
+    // Prerequisite: go must be available
+    const goPath = await whichTool("go");
+    if (!goPath) {
+      return {
+        installed: [],
+        failed: [{ tool: "go", reason: "Go compiler not found. Install from https://go.dev/dl/" }],
+        notes: ["go is required before other tools can be installed"],
+      };
+    }
+
+    for (const [name, pkg] of Object.entries(GoLanguageAdapter.GO_TOOLS)) {
+      if (await whichTool(name)) {
+        notes.push(`${name}: already installed`);
+        continue;
+      }
+
+      const result = await exec(["go", "install", pkg]);
+      if (result.exitCode === 0) {
+        // Verify it's now on PATH
+        if (await whichTool(name)) {
+          installed.push(name);
+        } else {
+          // Installed but not on PATH — check GOPATH/bin
+          const goEnv = await exec(["go", "env", "GOPATH"]);
+          const gopath = goEnv.stdout.trim();
+          notes.push(
+            `${name}: installed to ${gopath}/bin but not on PATH. Add to PATH: export PATH=$PATH:${gopath}/bin`,
+          );
+          installed.push(name);
+        }
+      } else {
+        failed.push({
+          tool: name,
+          reason: result.stderr || `go install ${pkg} failed with exit code ${result.exitCode}`,
+        });
+      }
+    }
+
+    return { installed, failed, notes };
   }
 
   async enumerateUnits(

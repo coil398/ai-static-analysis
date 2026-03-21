@@ -196,7 +196,8 @@ callee[N]: ranges <line>:<col>-<endCol> in <file> from/to function <name> in <fi
 | 機能 | 状態 | ツール |
 |---|---|---|
 | `detect` | 実装済 | go.mod 存在チェック |
-| `doctor` | 実装済 | go, gopls 存在確認 |
+| `doctor` | 実装済 | go + オプションツール5種の存在確認、bootstrap ヒント |
+| `bootstrap` | 実装済 | `go install` で gopls/staticcheck/errcheck/gosec/govulncheck を自動インストール |
 | `enumerateUnits` | 実装済 | `go list -json` |
 | `indexUnits` (units/files/deps) | 実装済 | `go list -json` |
 | `indexUnits` (symbols) | 実装済 | `gopls` LSP `documentSymbol` |

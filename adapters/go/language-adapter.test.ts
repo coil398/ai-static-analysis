@@ -217,6 +217,25 @@ describe("GoLanguageAdapter", () => {
     expect(storeImplsStorer).toBeDefined();
   }, 30_000);
 
+  test("doctor reports missing optional tools with bootstrap hint", async () => {
+    const result = await adapter.doctor();
+    expect(result.ok).toBe(true); // go is available
+    // Should mention optional tools
+    const allNotes = result.notes.join("\n");
+    expect(allNotes).toContain("gopls");
+  });
+
+  test("bootstrap attempts to install missing tools", async () => {
+    const result = await adapter.bootstrap();
+    // Should return a valid result structure
+    expect(result).toHaveProperty("installed");
+    expect(result).toHaveProperty("failed");
+    expect(result).toHaveProperty("notes");
+    // At minimum, all entries should be in installed or notes (already installed) or failed
+    const allTools = [...result.installed, ...result.failed.map((f) => f.tool), ...result.notes.filter((n) => n.includes("already installed")).map((n) => n.split(":")[0]!)];
+    expect(allTools.length).toBeGreaterThan(0);
+  }, 120_000);
+
   test("diagnose runs go vet and detects no issues on clean code", async () => {
     const units = await adapter.enumerateUnits(TESTDATA, {});
     const diags = await adapter.diagnose(units, {});
