@@ -28,6 +28,7 @@ export async function goList(
 
   const result = await exec(["go", "list", "-json", "./..."], {
     cwd: repoRoot,
+    ...(Object.keys(env).length > 0 ? { env } : {}),
   });
 
   if (result.exitCode !== 0) {

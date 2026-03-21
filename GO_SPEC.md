@@ -30,6 +30,7 @@ Unit {
   metadata: {
     import_path: "<full_import_path>" // e.g. "example.com/app/internal/service"
     module: "<module_path>"           // e.g. "example.com/app"
+    repo_root: "<absolute_path>"     // e.g. "/home/user/myproject" (indexUnits で必要)
   }
 }
 ```
@@ -109,10 +110,12 @@ go vet ./...
 
 ## 8. ActionAdapter
 
+全メソッドは `repoRoot` を第一引数に受け取り、Go コマンドの `cwd` として使用する。
+
 | アクション | コマンド |
 |---|---|
 | `format` | `go fmt <targets>` |
-| `check` | `go build ./...` + `go vet ./...` |
+| `check` | `go build <targets>` + `go vet <targets>` |
 | `test` | `go test <targets>` |
 
 ### Scope → Go コマンド引数
@@ -120,7 +123,7 @@ go vet ./...
 | Scope | 引数 |
 |---|---|
 | `repo` | `./...` |
-| `unit` | `./<path>/...` |
+| `unit` | `./<path>/...`（`unitId` から `unit:go:` プレフィックスを除去してパスを抽出） |
 | `files` | 各ファイルパス直接 |
 | `paths` | 各 glob パターン |
 

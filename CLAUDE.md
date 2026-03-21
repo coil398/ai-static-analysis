@@ -60,7 +60,8 @@
 - メタスキル (`create-skill`, `improve-skill`) は core/ の実装作業では出番がなかった。ルート直下のスキル定義 .md を作成する Step 5 以降で初めて使う想定。実際に使ってみてテンプレート・チェックリストが重すぎないか要検証
 - Step 5-6: `applyDelta` は structuredClone で元データを保護。cascade 削除は unit→files→symbols→refs/type_relations/call_edges/diagnostics の順。`impactUnits` は file:prefix の有無を両方許容。
 - Step 5-6: skills 層は `createRegistry()` で毎回新しいレジストリを生成する設計。将来 DI に変えるなら引数に渡す形に変更する。
-- Step 5-6: Go adapter の `go fmt ./...` は cwd が設定されない問題あり（adapter 側の課題）。skills/actions のテストでは files scope で回避。
+- Step 5-6→修正済: Go adapter の cwd 問題を解決。ActionAdapter インターフェースに `repoRoot` を第一引数として追加。unit scope の unitId から `unit:go:` プレフィックスを除去してパスを抽出するよう修正。
+- Go adapter: `exec()` に `env` パラメータを追加し、`goList()` で GOOS/GOARCH/GOTAGS 環境変数を Bun.spawn に渡すよう修正。
 - Step 7: JSONL は `cache/facts/` ディレクトリの有無で自動判別（ディレクトリ優先）。`readFacts` は後方互換のため JSON フォールバックを維持。インデックスは `cache/index/` に JSON で保存。
 - Step 7: `queryDefs`（name 検索）と `queryRefs` はインデックスがある場合のみ使用し、なければ既存のフルスキャンにフォールバック。
 - Step 8: InsightAdapter インターフェース（外部 AI API 呼び出し）は実装しない設計。Claude Code 自身がスキル定義（.md）を読んで分析を行う。`skills/insights.ts` はコンテキスト準備と query* のみ担当。

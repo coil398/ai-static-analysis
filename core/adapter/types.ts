@@ -79,14 +79,17 @@ export interface InsightAdapter {
 export interface ActionAdapter {
   readonly lang: string;
   format(
+    repoRoot: string,
     scope: Scope,
     profile: Record<string, string>,
   ): Promise<ActionResult>;
   check(
+    repoRoot: string,
     scope: Scope,
     profile: Record<string, string>,
   ): Promise<ActionResult>;
   test(
+    repoRoot: string,
     scope: Scope,
     profile: Record<string, string>,
   ): Promise<ActionResult>;
