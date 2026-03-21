@@ -10,8 +10,10 @@ import {
   goplsImplementation,
 } from "./gopls.ts";
 import { GoplsLspClient } from "./lsp-client.ts";
+import { whichTool } from "./utils.ts";
 
 const TESTDATA = resolve(import.meta.dir, "testdata");
+const hasGopls = await whichTool("gopls") !== null;
 
 // --- Parser unit tests ---
 
@@ -108,7 +110,7 @@ describe("parseReferencesOutput", () => {
 
 // --- Integration tests (require gopls) ---
 
-describe("gopls integration", () => {
+describe.skipIf(!hasGopls)("gopls integration", () => {
   let client: GoplsLspClient;
 
   beforeAll(() => {

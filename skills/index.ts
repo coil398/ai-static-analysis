@@ -10,7 +10,7 @@ import {
 } from "../core/fingerprint/index.ts";
 import {
   readFacts,
-  writeFacts,
+  writeFactsJsonl,
   readFingerprint,
   writeFingerprint,
 } from "../core/storage/index.ts";
@@ -155,7 +155,7 @@ export async function indexFacts(options: IndexOptions): Promise<IndexResult> {
   }
 
   // 7. Persist
-  await writeFacts(cacheDir, facts);
+  await writeFactsJsonl(cacheDir, facts);
   await writeFingerprint(cacheDir, fingerprint);
   await buildIndexes(cacheDir, facts);
 

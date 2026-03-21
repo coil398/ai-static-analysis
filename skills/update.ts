@@ -8,7 +8,7 @@ import {
 } from "../core/fingerprint/index.ts";
 import {
   readFacts,
-  writeFacts,
+  writeFactsJsonl,
   readFingerprint,
   writeFingerprint,
 } from "../core/storage/index.ts";
@@ -174,7 +174,7 @@ export async function updateFacts(
   facts.snapshot.commit = fingerprint.repo_state.commit;
 
   // 10. Persist + rebuild indexes + update fingerprint
-  await writeFacts(cacheDir, facts);
+  await writeFactsJsonl(cacheDir, facts);
   await writeFingerprint(cacheDir, fingerprint);
   await buildIndexes(cacheDir, facts);
 

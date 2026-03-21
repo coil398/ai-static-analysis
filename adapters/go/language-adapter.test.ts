@@ -10,8 +10,10 @@ import {
   parseDuplOutput,
   detectCyclicDeps,
 } from "./language-adapter.ts";
+import { whichTool } from "./utils.ts";
 
 const TESTDATA = resolve(import.meta.dir, "testdata");
+const hasGopls = await whichTool("gopls") !== null;
 
 describe("GoLanguageAdapter", () => {
   const adapter = new GoLanguageAdapter();
@@ -93,7 +95,7 @@ describe("GoLanguageAdapter", () => {
     });
   }, 30_000);
 
-  test("indexUnits produces symbols via gopls", async () => {
+  test.skipIf(!hasGopls)("indexUnits produces symbols via gopls", async () => {
     const units = await adapter.enumerateUnits(TESTDATA, {});
     const delta = await adapter.indexUnits(units, {});
 
@@ -131,7 +133,7 @@ describe("GoLanguageAdapter", () => {
     expect(storeField!.exported).toBe(false);
   }, 30_000);
 
-  test("indexUnits produces call_edges via gopls", async () => {
+  test.skipIf(!hasGopls)("indexUnits produces call_edges via gopls", async () => {
     const units = await adapter.enumerateUnits(TESTDATA, {});
     const delta = await adapter.indexUnits(units, {});
 
@@ -159,7 +161,7 @@ describe("GoLanguageAdapter", () => {
     expect(newServiceToNewStore).toBeDefined();
   }, 30_000);
 
-  test("indexUnits produces refs derived from call_edges", async () => {
+  test.skipIf(!hasGopls)("indexUnits produces refs derived from call_edges", async () => {
     const units = await adapter.enumerateUnits(TESTDATA, {});
     const delta = await adapter.indexUnits(units, {});
 
@@ -178,7 +180,7 @@ describe("GoLanguageAdapter", () => {
     }
   }, 30_000);
 
-  test("indexUnits produces non-call refs (type_ref, field_access)", async () => {
+  test.skipIf(!hasGopls)("indexUnits produces non-call refs (type_ref, field_access)", async () => {
     const units = await adapter.enumerateUnits(TESTDATA, {});
     const delta = await adapter.indexUnits(units, {});
 
@@ -201,7 +203,7 @@ describe("GoLanguageAdapter", () => {
     }
   }, 30_000);
 
-  test("indexUnits produces type_relations via gopls", async () => {
+  test.skipIf(!hasGopls)("indexUnits produces type_relations via gopls", async () => {
     const units = await adapter.enumerateUnits(TESTDATA, {});
     const delta = await adapter.indexUnits(units, {});
 

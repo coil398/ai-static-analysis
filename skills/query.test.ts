@@ -14,7 +14,11 @@ import {
   queryCallers,
   queryCallees,
   queryDeadCode,
+  clearFactsCache,
 } from "./query.ts";
+import { whichTool } from "../adapters/go/utils.ts";
+
+const hasGopls = await whichTool("gopls") !== null;
 
 const TESTDATA = resolve(
   import.meta.dir,
@@ -26,6 +30,7 @@ describe("query-facts", () => {
   let cacheDir: string;
 
   afterEach(async () => {
+    clearFactsCache();
     if (tempDir) await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -52,14 +57,14 @@ describe("query-facts", () => {
     expect(rdepSources).toContain("unit:go:.");
   }, 30_000);
 
-  test("queryDefs returns symbols matching name", async () => {
+  test.skipIf(!hasGopls)("queryDefs returns symbols matching name", async () => {
     const opts = await setup();
     const result = await queryDefs("NewService", opts);
     expect(result.symbols.length).toBeGreaterThan(0);
     expect(result.symbols[0]!.name).toBe("NewService");
   }, 30_000);
 
-  test("queryRefs returns refs for a symbol", async () => {
+  test.skipIf(!hasGopls)("queryRefs returns refs for a symbol", async () => {
     const opts = await setup();
     // First find a symbol ID
     const defs = await queryDefs("NewService", opts);
@@ -106,7 +111,7 @@ describe("query-facts", () => {
     expect(result.changedFiles).toEqual(["main.go"]);
   }, 30_000);
 
-  test("queryImpls returns implementations", async () => {
+  test.skipIf(!hasGopls)("queryImpls returns implementations", async () => {
     const opts = await setup();
     // Find Storer interface symbol
     const defs = await queryDefs("Storer", opts);
@@ -119,7 +124,7 @@ describe("query-facts", () => {
     expect(result.implementations[0]!.from_type_id).toContain("Store");
   }, 30_000);
 
-  test("queryCallers returns callers of a function", async () => {
+  test.skipIf(!hasGopls)("queryCallers returns callers of a function", async () => {
     const opts = await setup();
     const defs = await queryDefs("NewService", opts);
     expect(defs.symbols.length).toBeGreaterThan(0);
@@ -131,7 +136,7 @@ describe("query-facts", () => {
     expect(result.callers[0]!.caller_id).toContain("main");
   }, 30_000);
 
-  test("queryCallees returns callees of a function", async () => {
+  test.skipIf(!hasGopls)("queryCallees returns callees of a function", async () => {
     const opts = await setup();
     const defs = await queryDefs("main", opts);
     expect(defs.symbols.length).toBeGreaterThan(0);

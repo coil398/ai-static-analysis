@@ -83,14 +83,33 @@ function resolveCacheDir(opts: QueryOptions): string {
   return opts.cacheDir ?? join(opts.repoRoot, "cache");
 }
 
+// In-process cache to avoid redundant disk reads within a session.
+// Keyed by resolved cacheDir path.
+const factsCache = new Map<string, { facts: Facts; loadedAt: number }>();
+const CACHE_TTL_MS = 30_000; // 30 seconds
+
+/** Clear the in-process facts cache (useful after writes or in tests). */
+export function clearFactsCache(): void {
+  factsCache.clear();
+}
+
 async function loadFacts(opts: QueryOptions): Promise<Facts> {
   const cacheDir = resolveCacheDir(opts);
+
+  // Check in-process cache
+  const cached = factsCache.get(cacheDir);
+  if (cached && Date.now() - cached.loadedAt < CACHE_TTL_MS) {
+    return cached.facts;
+  }
+
   const facts = await readFacts(cacheDir);
   if (!facts) {
     throw new Error(
       `No cached facts found. Run index-facts first. (cacheDir: ${cacheDir})`,
     );
   }
+
+  factsCache.set(cacheDir, { facts, loadedAt: Date.now() });
   return facts;
 }
 

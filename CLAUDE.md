@@ -75,3 +75,7 @@
 - デッドコード検出: `queryDeadCode()` を query-facts に追加。exported symbol × refs/call_edges のゼロ参照チェック。main/init/TestXxx/interface実装を除外。
 - コード重複検出: Go adapter の `diagnose` に `dupl -plumbing` を統合。重複ブロックを diagnostics として報告。bootstrap 対象にも追加。
 - 共通化候補: Insights スキーマに `DuplicationHint` 型を追加（extract_function/extract_interface/extract_module/parameterize）。`analyze-insights` が dupl diagnostics を手がかりにソースを分析して共通化提案を生成。`queryDuplicationHints()` で取得。
+- バレルエクスポート: ルート `index.ts` を追加。全公開 API を re-export。`package.json` の `module`/`main` フィールドと整合。
+- JSONL デフォルト化: `indexFacts`/`updateFacts` が `writeFactsJsonl` を使用するよう変更。`readFacts` は引き続き JSON/JSONL 両方を自動判別。
+- クエリキャッシュ: `skills/query.ts` に in-process facts キャッシュを追加（30秒 TTL）。同一セッション内での重複ディスク読み込みを回避。`clearFactsCache()` でリセット可能。
+- テスト堅牢化: gopls 依存テストに `skipIf(!hasGopls)` を追加。gopls 未インストール環境でも全テストが skip/pass する。
