@@ -23,7 +23,7 @@ export async function bootstrapTools(
   // Detect supported languages
   const detected = await registry.detectAll(repoRoot);
   if (detected.length === 0) {
-    return { ok: true, results: {}, errors: ["No supported languages detected"] };
+    return { ok: false, results: {}, errors: ["No supported languages detected"] };
   }
 
   const results: Record<string, BootstrapResult> = {};

@@ -283,7 +283,7 @@ export class GoLanguageAdapter implements LanguageAdapter {
         symbols.push(sym);
         symbolByPos.set(`${relPath}:${gSym.line}:${gSym.startCol}`, sym);
 
-        if (gSym.kind === "Interface" || gSym.kind === "Struct") {
+        if (gSym.kind === "Interface") {
           interfaceSymbols.push({
             symbol: sym,
             relPath,
@@ -485,17 +485,28 @@ export class GoLanguageAdapter implements LanguageAdapter {
     fileId: string,
     line: number,
   ): Symbol | null {
-    let best: Symbol | null = null;
-    let bestLine = -1;
-    for (const sym of symbols) {
-      if (sym.decl.file_id !== fileId) continue;
-      if (sym.kind !== "function" && sym.kind !== "method") continue;
-      if (sym.decl.position.line <= line && sym.decl.position.line > bestLine) {
-        best = sym;
-        bestLine = sym.decl.position.line;
+    // Collect all function/method symbols in this file, sorted by declaration line
+    const fileFuncs = symbols
+      .filter(
+        (s) =>
+          s.decl.file_id === fileId &&
+          (s.kind === "function" || s.kind === "method"),
+      )
+      .sort((a, b) => a.decl.position.line - b.decl.position.line);
+
+    // Find the function that contains the given line:
+    // A function's range is [its decl line, next function's decl line - 1]
+    for (let i = 0; i < fileFuncs.length; i++) {
+      const sym = fileFuncs[i]!;
+      const nextStart =
+        i + 1 < fileFuncs.length
+          ? fileFuncs[i + 1]!.decl.position.line
+          : Infinity;
+      if (sym.decl.position.line <= line && line < nextStart) {
+        return sym;
       }
     }
-    return best;
+    return null;
   }
 
   private mapSymbolKind(goplsKind: string): string {
@@ -786,7 +797,7 @@ export function detectCyclicDeps(deps: Dep[]): Diagnostic[] {
       if (reportedCycles.has(cycleKey)) return;
       reportedCycles.add(cycleKey);
       diagnostics.push({
-        file_id: `unit:${cycle[0]!}`,
+        file_id: cycle[0]!,
         position: { line: 0, column: 0 },
         severity: "warning",
         message: `circular dependency detected: ${cycle.map((u) => u.replace(/^unit:go:/, "")).join(" -> ")}`,
@@ -920,33 +931,43 @@ export function parseGovulncheckOutput(
   _repoRoot: string,
 ): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
-  // govulncheck JSON output contains one JSON message per object
-  // We look for "finding" objects which indicate vulnerabilities
-  try {
-    // govulncheck outputs newline-delimited JSON messages
-    for (const line of stdout.split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        const msg = JSON.parse(line);
-        // govulncheck v1 format: {"vulnerability": {...}} or {"finding": {...}}
-        const vuln = msg.osv ?? msg.vulnerability;
-        if (vuln) {
-          const id = vuln.id ?? "UNKNOWN";
-          const summary = vuln.summary ?? vuln.details ?? "known vulnerability";
-          diagnostics.push({
-            file_id: "file:go.mod",
-            position: { line: 1, column: 1 },
-            severity: "error",
-            message: `${id}: ${summary}`,
-            tool: "govulncheck",
-          });
+  // govulncheck -json outputs multi-line JSON objects (not NDJSON).
+  // Parse using brace-counting like parseNDJSON in go-list.ts.
+  const objects: unknown[] = [];
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < stdout.length; i++) {
+    const ch = stdout[i];
+    if (ch === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        try {
+          objects.push(JSON.parse(stdout.slice(start, i + 1)));
+        } catch {
+          // skip malformed object
         }
-      } catch {
-        // Skip malformed lines
+        start = -1;
       }
     }
-  } catch {
-    // Malformed output
+  }
+
+  for (const msg of objects) {
+    const obj = msg as Record<string, unknown>;
+    const vuln = (obj.osv ?? obj.vulnerability) as Record<string, unknown> | undefined;
+    if (vuln) {
+      const id = (vuln.id as string) ?? "UNKNOWN";
+      const summary = (vuln.summary ?? vuln.details ?? "known vulnerability") as string;
+      diagnostics.push({
+        file_id: "file:go.mod",
+        position: { line: 1, column: 1 },
+        severity: "error",
+        message: `${id}: ${summary}`,
+        tool: "govulncheck",
+      });
+    }
   }
 
   // Deduplicate by message

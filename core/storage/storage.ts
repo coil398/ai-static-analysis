@@ -113,17 +113,17 @@ export async function writeFactsJsonl(
     meta: facts.meta,
   };
 
-  await Promise.all([
-    writeJson(join(factsDir, "meta.json"), meta),
-    writeJsonl(join(factsDir, "units.jsonl"), facts.units),
-    writeJsonl(join(factsDir, "files.jsonl"), facts.files),
-    writeJsonl(join(factsDir, "deps.jsonl"), facts.deps),
-    writeJsonl(join(factsDir, "symbols.jsonl"), facts.symbols),
-    writeJsonl(join(factsDir, "refs.jsonl"), facts.refs),
-    writeJsonl(join(factsDir, "type_relations.jsonl"), facts.type_relations),
-    writeJsonl(join(factsDir, "call_edges.jsonl"), facts.call_edges),
-    writeJsonl(join(factsDir, "diagnostics.jsonl"), facts.diagnostics),
-  ]);
+  // Write data files first, then meta.json last.
+  // If interrupted, stale meta.json signals inconsistency on next read.
+  await writeJsonl(join(factsDir, "units.jsonl"), facts.units);
+  await writeJsonl(join(factsDir, "files.jsonl"), facts.files);
+  await writeJsonl(join(factsDir, "deps.jsonl"), facts.deps);
+  await writeJsonl(join(factsDir, "symbols.jsonl"), facts.symbols);
+  await writeJsonl(join(factsDir, "refs.jsonl"), facts.refs);
+  await writeJsonl(join(factsDir, "type_relations.jsonl"), facts.type_relations);
+  await writeJsonl(join(factsDir, "call_edges.jsonl"), facts.call_edges);
+  await writeJsonl(join(factsDir, "diagnostics.jsonl"), facts.diagnostics);
+  await writeJson(join(factsDir, "meta.json"), meta);
 }
 
 // --- Fingerprint ---

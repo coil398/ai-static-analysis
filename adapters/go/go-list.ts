@@ -47,8 +47,23 @@ export function parseNDJSON(input: string): GoPackage[] {
   let depth = 0;
   let start = -1;
 
+  let inString = false;
+  let escaped = false;
   for (let i = 0; i < input.length; i++) {
     const ch = input[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\" && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
     if (ch === "{") {
       if (depth === 0) start = i;
       depth++;

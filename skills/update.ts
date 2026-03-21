@@ -10,6 +10,7 @@ import {
   readFacts,
   writeFacts,
   readFingerprint,
+  writeFingerprint,
 } from "../core/storage/index.ts";
 import { applyDelta, impactUnits } from "../core/diff/index.ts";
 import { buildIndexes } from "../core/index/index.ts";
@@ -169,8 +170,12 @@ export async function updateFacts(
     }
   }
 
-  // 8. Persist + rebuild indexes
+  // 9. Update snapshot commit to current
+  facts.snapshot.commit = fingerprint.repo_state.commit;
+
+  // 10. Persist + rebuild indexes + update fingerprint
   await writeFacts(cacheDir, facts);
+  await writeFingerprint(cacheDir, fingerprint);
   await buildIndexes(cacheDir, facts);
 
   return {

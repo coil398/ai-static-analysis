@@ -274,10 +274,24 @@ export async function queryDeadCode(
   }
 
   // Build set of symbol IDs that implement an interface (not dead even if unreferenced)
+  // Include both the implementing type AND its methods (which satisfy the interface)
   const implementorIds = new Set<string>();
   for (const rel of facts.type_relations) {
     if (rel.kind === "implements") {
       implementorIds.add(rel.from_type_id);
+    }
+  }
+  // Also exclude methods on implementing types (they exist to satisfy interfaces)
+  for (const sym of facts.symbols) {
+    if (sym.kind === "method" && sym.metadata?.receiver) {
+      // Check if the receiver type implements any interface
+      const receiverTypeId = facts.symbols.find(
+        (s) => s.name === sym.metadata!.receiver && s.unit_id === sym.unit_id &&
+               (s.kind === "struct" || s.kind === "type"),
+      )?.id;
+      if (receiverTypeId && implementorIds.has(receiverTypeId)) {
+        implementorIds.add(sym.id);
+      }
     }
   }
 

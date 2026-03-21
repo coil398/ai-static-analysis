@@ -310,6 +310,7 @@ export class GoplsLspClient {
     // Clean up any remaining pending requests
     for (const [id, pending] of this.pendingRequests) {
       clearTimeout(pending.timer);
+      pending.reject(new Error("LSP client shut down"));
       this.pendingRequests.delete(id);
     }
     if (this.proc) {
