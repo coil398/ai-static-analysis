@@ -1,25 +1,30 @@
-// gopls CLI wrapper — GO_SPEC.md §10 (future → now)
-// Parses gopls subcommand output into structured data.
+// gopls integration — GO_SPEC.md §10
+// Uses gopls LSP server for high-performance symbol analysis.
+// Falls back to CLI mode if LSP is unavailable.
 
 import { relative, resolve } from "node:path";
-import { exec } from "./utils.ts";
+import {
+  GoplsLspClient,
+  type LspDocumentSymbol,
+  type LspCallHierarchyItem,
+} from "./lsp-client.ts";
 
-// --- Types ---
+// --- Public types (unchanged from CLI version) ---
 
 export interface GoplsSymbol {
   name: string;
-  kind: string; // "Function", "Struct", "Interface", "Method", "Field", "Variable", "Constant"
-  line: number;
+  kind: string;
+  line: number; // 1-based
   endCol: number;
   startCol: number;
   children: GoplsSymbol[];
-  parentName?: string; // for methods: receiver type name
+  parentName?: string;
 }
 
 export interface GoplsCallEdge {
   name: string;
-  file: string;
-  line: number;
+  file: string; // absolute path
+  line: number; // 1-based
   col: number;
   rangeLine: number;
   rangeCol: number;
@@ -33,35 +38,168 @@ export interface GoplsCallHierarchy {
 }
 
 export interface GoplsLocation {
-  file: string;
-  line: number;
+  file: string; // absolute path
+  line: number; // 1-based
   col: number;
   endCol: number;
 }
 
-// --- Execution ---
+// --- LSP Symbol Kind → string mapping ---
 
-async function runGopls(
-  args: string[],
-  cwd: string,
-): Promise<{ stdout: string; stderr: string; ok: boolean }> {
-  const result = await exec(["gopls", ...args], { cwd });
-  return {
-    stdout: result.stdout,
-    stderr: result.stderr,
-    ok: result.exitCode === 0,
-  };
+const LSP_KIND_MAP: Record<number, string> = {
+  2: "Module",
+  5: "Struct",
+  6: "Method",
+  8: "Field",
+  11: "Interface",
+  12: "Function",
+  13: "Variable",
+  14: "Constant",
+  22: "Struct",
+  23: "Struct",
+};
+
+function lspKindToString(kind: number): string {
+  return LSP_KIND_MAP[kind] ?? "Unknown";
 }
 
-// --- Parsers ---
+// --- LSP-based implementation ---
 
-/**
- * Parse `gopls symbols <file>` output.
- *
- * Format:
- *   <name> <Kind> <line>:<col>-<endLine>:<endCol>
- *     <childName> <Kind> <line>:<col>-<endLine>:<endCol>
- */
+function lspSymbolToGoplsSymbol(
+  sym: LspDocumentSymbol,
+  parentName?: string,
+): GoplsSymbol {
+  const result: GoplsSymbol = {
+    name: sym.name,
+    kind: lspKindToString(sym.kind),
+    line: sym.selectionRange.start.line + 1, // LSP is 0-based
+    startCol: sym.selectionRange.start.character + 1,
+    endCol: sym.selectionRange.end.character + 1,
+    children: [],
+    parentName,
+  };
+
+  if (sym.children) {
+    for (const child of sym.children) {
+      result.children.push(lspSymbolToGoplsSymbol(child, sym.name));
+    }
+  }
+
+  return result;
+}
+
+export async function goplsSymbols(
+  filePath: string,
+  cwd: string,
+  client?: GoplsLspClient,
+): Promise<GoplsSymbol[]> {
+  if (!client) {
+    // Fallback: create a temporary client
+    const tmpClient = new GoplsLspClient(cwd);
+    try {
+      return await goplsSymbols(filePath, cwd, tmpClient);
+    } finally {
+      await tmpClient.shutdown();
+    }
+  }
+
+  const lspSymbols = await client.documentSymbols(filePath);
+  return lspSymbols.map((s) => lspSymbolToGoplsSymbol(s));
+}
+
+export async function goplsCallHierarchy(
+  filePath: string,
+  line: number,
+  col: number,
+  cwd: string,
+  client?: GoplsLspClient,
+): Promise<GoplsCallHierarchy | null> {
+  if (!client) {
+    const tmpClient = new GoplsLspClient(cwd);
+    try {
+      return await goplsCallHierarchy(filePath, line, col, cwd, tmpClient);
+    } finally {
+      await tmpClient.shutdown();
+    }
+  }
+
+  // LSP is 0-based
+  const items = await client.prepareCallHierarchy(filePath, line - 1, col - 1);
+  if (items.length === 0) return null;
+
+  const item = items[0]!;
+  const result: GoplsCallHierarchy = {
+    identifier: {
+      name: item.name,
+      file: GoplsLspClient.uriToPath(item.uri),
+      line: item.selectionRange.start.line + 1,
+      col: item.selectionRange.start.character + 1,
+    },
+    incoming: [],
+    outgoing: [],
+  };
+
+  // Get outgoing calls
+  const outgoing = await client.outgoingCalls(item);
+  for (const call of outgoing) {
+    const toFile = GoplsLspClient.uriToPath(call.to.uri);
+    for (const fromRange of call.fromRanges) {
+      result.outgoing.push({
+        name: call.to.name,
+        file: toFile,
+        line: call.to.selectionRange.start.line + 1,
+        col: call.to.selectionRange.start.character + 1,
+        rangeLine: fromRange.start.line + 1,
+        rangeCol: fromRange.start.character + 1,
+        rangeEndCol: fromRange.end.character + 1,
+      });
+    }
+  }
+
+  // Get incoming calls
+  const incoming = await client.incomingCalls(item);
+  for (const call of incoming) {
+    result.incoming.push({
+      name: call.from.name,
+      file: GoplsLspClient.uriToPath(call.from.uri),
+      line: call.from.selectionRange.start.line + 1,
+      col: call.from.selectionRange.start.character + 1,
+      rangeLine: 0,
+      rangeCol: 0,
+      rangeEndCol: 0,
+    });
+  }
+
+  return result;
+}
+
+export async function goplsImplementation(
+  filePath: string,
+  line: number,
+  col: number,
+  cwd: string,
+  client?: GoplsLspClient,
+): Promise<GoplsLocation[]> {
+  if (!client) {
+    const tmpClient = new GoplsLspClient(cwd);
+    try {
+      return await goplsImplementation(filePath, line, col, cwd, tmpClient);
+    } finally {
+      await tmpClient.shutdown();
+    }
+  }
+
+  const locs = await client.implementation(filePath, line - 1, col - 1);
+  return locs.map((loc) => ({
+    file: GoplsLspClient.uriToPath(loc.uri),
+    line: loc.range.start.line + 1,
+    col: loc.range.start.character + 1,
+    endCol: loc.range.end.character + 1,
+  }));
+}
+
+// --- CLI parser functions (kept for unit tests) ---
+
 export function parseSymbolsOutput(output: string): GoplsSymbol[] {
   const symbols: GoplsSymbol[] = [];
   let currentParent: GoplsSymbol | null = null;
@@ -72,7 +210,6 @@ export function parseSymbolsOutput(output: string): GoplsSymbol[] {
     const isChild = line.startsWith("\t");
     const trimmed = line.trim();
 
-    // pattern: Name Kind line:col-endLine:endCol
     const match = /^(\S+)\s+(\S+)\s+(\d+):(\d+)-(\d+):(\d+)$/.exec(trimmed);
     if (!match) continue;
 
@@ -98,26 +235,6 @@ export function parseSymbolsOutput(output: string): GoplsSymbol[] {
   return symbols;
 }
 
-/**
- * Run `gopls symbols` for a file.
- */
-export async function goplsSymbols(
-  filePath: string,
-  cwd: string,
-): Promise<GoplsSymbol[]> {
-  const result = await runGopls(["symbols", filePath], cwd);
-  if (!result.ok) return [];
-  return parseSymbolsOutput(result.stdout);
-}
-
-/**
- * Parse `gopls call_hierarchy <position>` output.
- *
- * Format:
- *   incoming[N]: function <name> in <file>:<line>:<col>-<endCol>
- *   identifier: function <name> in <file>:<line>:<col>-<endCol>
- *   callee[N]: ranges <line>:<col>-<endCol> in <file> from/to function <name> in <file>:<line>:<col>-<endCol>
- */
 export function parseCallHierarchyOutput(output: string): GoplsCallHierarchy {
   const result: GoplsCallHierarchy = {
     identifier: { name: "", file: "", line: 0, col: 0 },
@@ -129,7 +246,6 @@ export function parseCallHierarchyOutput(output: string): GoplsCallHierarchy {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    // identifier: function <name> in <file>:<line>:<col>-<endCol>
     const idMatch =
       /^identifier:\s+function\s+(\S+)\s+in\s+(.+):(\d+):(\d+)-(\d+)$/.exec(
         trimmed,
@@ -144,7 +260,6 @@ export function parseCallHierarchyOutput(output: string): GoplsCallHierarchy {
       continue;
     }
 
-    // callee[N]: ranges <line>:<col>-<endCol> in <file> from/to function <name> in <file>:<line>:<col>-<endCol>
     const calleeMatch =
       /^callee\[\d+\]:\s+ranges\s+(\d+):(\d+)-(\d+)\s+in\s+(.+?)\s+from\/to\s+function\s+(\S+)\s+in\s+(.+):(\d+):(\d+)-(\d+)$/.exec(
         trimmed,
@@ -162,7 +277,6 @@ export function parseCallHierarchyOutput(output: string): GoplsCallHierarchy {
       continue;
     }
 
-    // incoming[N]: function <name> in <file>:<line>:<col>-<endCol>
     const incomingMatch =
       /^incoming\[\d+\]:\s+function\s+(\S+)\s+in\s+(.+):(\d+):(\d+)-(\d+)$/.exec(
         trimmed,
@@ -183,35 +297,11 @@ export function parseCallHierarchyOutput(output: string): GoplsCallHierarchy {
   return result;
 }
 
-/**
- * Run `gopls call_hierarchy` for a position.
- */
-export async function goplsCallHierarchy(
-  filePath: string,
-  line: number,
-  col: number,
-  cwd: string,
-): Promise<GoplsCallHierarchy | null> {
-  const result = await runGopls(
-    ["call_hierarchy", `${filePath}:${line}:${col}`],
-    cwd,
-  );
-  if (!result.ok) return null;
-  return parseCallHierarchyOutput(result.stdout);
-}
-
-/**
- * Parse `gopls implementation <position>` output.
- *
- * Format:
- *   /path/to/file.go:<line>:<col>-<endCol>
- */
 export function parseImplementationOutput(output: string): GoplsLocation[] {
   const locations: GoplsLocation[] = [];
   for (const line of output.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    // /path/to/file.go:line:col-endCol
     const match = /^(.+):(\d+):(\d+)-(\d+)$/.exec(trimmed);
     if (!match) continue;
     locations.push({
@@ -224,46 +314,6 @@ export function parseImplementationOutput(output: string): GoplsLocation[] {
   return locations;
 }
 
-/**
- * Run `gopls implementation` for a position.
- */
-export async function goplsImplementation(
-  filePath: string,
-  line: number,
-  col: number,
-  cwd: string,
-): Promise<GoplsLocation[]> {
-  const result = await runGopls(
-    ["implementation", `${filePath}:${line}:${col}`],
-    cwd,
-  );
-  if (!result.ok) return [];
-  return parseImplementationOutput(result.stdout);
-}
-
-/**
- * Parse `gopls references -d <position>` output.
- *
- * Format:
- *   /path/to/file.go:<line>:<col>-<endCol>
- */
 export function parseReferencesOutput(output: string): GoplsLocation[] {
-  return parseImplementationOutput(output); // same format
-}
-
-/**
- * Run `gopls references -d` for a position.
- */
-export async function goplsReferences(
-  filePath: string,
-  line: number,
-  col: number,
-  cwd: string,
-): Promise<GoplsLocation[]> {
-  const result = await runGopls(
-    ["references", "-d", `${filePath}:${line}:${col}`],
-    cwd,
-  );
-  if (!result.ok) return [];
-  return parseReferencesOutput(result.stdout);
+  return parseImplementationOutput(output);
 }

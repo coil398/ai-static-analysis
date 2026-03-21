@@ -25,6 +25,7 @@ import {
   goplsImplementation,
   type GoplsSymbol,
 } from "./gopls.ts";
+import { GoplsLspClient } from "./lsp-client.ts";
 
 export class GoLanguageAdapter implements LanguageAdapter {
   readonly lang = "go";
@@ -139,15 +140,21 @@ export class GoLanguageAdapter implements LanguageAdapter {
     let callEdges: CallEdge[] = [];
 
     if (hasGopls) {
-      const result = await this.indexWithGopls(
-        repoRoot,
-        allGoFiles,
-        unitIds,
-      );
-      symbols = result.symbols;
-      refs = result.refs;
-      typeRelations = result.typeRelations;
-      callEdges = result.callEdges;
+      const client = new GoplsLspClient(repoRoot);
+      try {
+        const result = await this.indexWithGopls(
+          repoRoot,
+          allGoFiles,
+          unitIds,
+          client,
+        );
+        symbols = result.symbols;
+        refs = result.refs;
+        typeRelations = result.typeRelations;
+        callEdges = result.callEdges;
+      } finally {
+        await client.shutdown();
+      }
     }
 
     return {
@@ -168,6 +175,7 @@ export class GoLanguageAdapter implements LanguageAdapter {
     repoRoot: string,
     goFiles: Array<{ absPath: string; relPath: string; unitId: string }>,
     unitIds: Set<string>,
+    client: GoplsLspClient,
   ): Promise<{
     symbols: Symbol[];
     refs: Ref[];
@@ -188,7 +196,7 @@ export class GoLanguageAdapter implements LanguageAdapter {
 
     // 1. Collect symbols from all files
     for (const { relPath, unitId } of goFiles) {
-      const goplsSyms = await goplsSymbols(relPath, repoRoot);
+      const goplsSyms = await goplsSymbols(relPath, repoRoot, client);
 
       for (const gSym of goplsSyms) {
         const sym = this.goplsSymbolToSymbol(gSym, relPath, unitId);
@@ -228,7 +236,7 @@ export class GoLanguageAdapter implements LanguageAdapter {
 
     // 2. Collect call edges from functions/methods
     for (const { symbol, relPath, line, col } of funcSymbols) {
-      const hierarchy = await goplsCallHierarchy(relPath, line, col, repoRoot);
+      const hierarchy = await goplsCallHierarchy(relPath, line, col, repoRoot, client);
       if (!hierarchy) continue;
 
       for (const callee of hierarchy.outgoing) {
@@ -275,7 +283,7 @@ export class GoLanguageAdapter implements LanguageAdapter {
     for (const { symbol, relPath, line, col } of interfaceSymbols) {
       if (symbol.kind !== "interface") continue;
 
-      const impls = await goplsImplementation(relPath, line, col, repoRoot);
+      const impls = await goplsImplementation(relPath, line, col, repoRoot, client);
       for (const impl of impls) {
         const implRelPath = relative(repoRoot, impl.file);
         const implKey = `${implRelPath}:${impl.line}:${impl.col}`;
