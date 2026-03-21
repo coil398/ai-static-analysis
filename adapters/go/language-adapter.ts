@@ -219,7 +219,7 @@ export class GoLanguageAdapter implements LanguageAdapter {
     let typeRelations: TypeRelation[] = [];
     let callEdges: CallEdge[] = [];
 
-    if (hasGopls) {
+    if (hasGopls && allGoFiles.length > 0) {
       const client = new GoplsLspClient(repoRoot);
       try {
         const result = await this.indexWithGopls(

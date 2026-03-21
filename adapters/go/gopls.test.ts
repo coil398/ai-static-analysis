@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { resolve } from "node:path";
 import {
   parseSymbolsOutput,
@@ -9,6 +9,7 @@ import {
   goplsCallHierarchy,
   goplsImplementation,
 } from "./gopls.ts";
+import { GoplsLspClient } from "./lsp-client.ts";
 
 const TESTDATA = resolve(import.meta.dir, "testdata");
 
@@ -108,8 +109,18 @@ describe("parseReferencesOutput", () => {
 // --- Integration tests (require gopls) ---
 
 describe("gopls integration", () => {
+  let client: GoplsLspClient;
+
+  beforeAll(() => {
+    client = new GoplsLspClient(TESTDATA);
+  });
+
+  afterAll(async () => {
+    await client.shutdown();
+  });
+
   test("goplsSymbols returns symbols for a file", async () => {
-    const symbols = await goplsSymbols("pkg/service.go", TESTDATA);
+    const symbols = await goplsSymbols("pkg/service.go", TESTDATA, client);
     const names = symbols.map((s) => s.name);
     expect(names).toContain("Service");
     expect(names).toContain("NewService");
@@ -121,7 +132,7 @@ describe("gopls integration", () => {
   });
 
   test("goplsCallHierarchy returns call edges from main", async () => {
-    const result = await goplsCallHierarchy("main.go", 9, 6, TESTDATA);
+    const result = await goplsCallHierarchy("main.go", 9, 6, TESTDATA, client);
     expect(result).not.toBeNull();
     expect(result!.identifier.name).toBe("main");
     expect(result!.outgoing.length).toBeGreaterThan(0);
@@ -137,6 +148,7 @@ describe("gopls integration", () => {
       4,
       6,
       TESTDATA,
+      client,
     );
     expect(locs.length).toBeGreaterThan(0);
     // Store implements Storer

@@ -12,6 +12,7 @@ import {
   readFingerprint,
 } from "../core/storage/index.ts";
 import { applyDelta, impactUnits } from "../core/diff/index.ts";
+import { buildIndexes } from "../core/index/index.ts";
 import { createRegistry } from "./registry.ts";
 import { indexFacts, type IndexOptions } from "./index.ts";
 
@@ -144,8 +145,9 @@ export async function updateFacts(
     }
   }
 
-  // 8. Persist
+  // 8. Persist + rebuild indexes
   await writeFacts(cacheDir, facts);
+  await buildIndexes(cacheDir, facts);
 
   return {
     ok: errors.length === 0,

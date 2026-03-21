@@ -90,19 +90,9 @@ function lspSymbolToGoplsSymbol(
 
 export async function goplsSymbols(
   filePath: string,
-  cwd: string,
-  client?: GoplsLspClient,
+  _cwd: string,
+  client: GoplsLspClient,
 ): Promise<GoplsSymbol[]> {
-  if (!client) {
-    // Fallback: create a temporary client
-    const tmpClient = new GoplsLspClient(cwd);
-    try {
-      return await goplsSymbols(filePath, cwd, tmpClient);
-    } finally {
-      await tmpClient.shutdown();
-    }
-  }
-
   const lspSymbols = await client.documentSymbols(filePath);
   return lspSymbols.map((s) => lspSymbolToGoplsSymbol(s));
 }
@@ -111,18 +101,9 @@ export async function goplsCallHierarchy(
   filePath: string,
   line: number,
   col: number,
-  cwd: string,
-  client?: GoplsLspClient,
+  _cwd: string,
+  client: GoplsLspClient,
 ): Promise<GoplsCallHierarchy | null> {
-  if (!client) {
-    const tmpClient = new GoplsLspClient(cwd);
-    try {
-      return await goplsCallHierarchy(filePath, line, col, cwd, tmpClient);
-    } finally {
-      await tmpClient.shutdown();
-    }
-  }
-
   // LSP is 0-based
   const items = await client.prepareCallHierarchy(filePath, line - 1, col - 1);
   if (items.length === 0) return null;
@@ -177,18 +158,9 @@ export async function goplsReferences(
   filePath: string,
   line: number,
   col: number,
-  cwd: string,
-  client?: GoplsLspClient,
+  _cwd: string,
+  client: GoplsLspClient,
 ): Promise<GoplsLocation[]> {
-  if (!client) {
-    const tmpClient = new GoplsLspClient(cwd);
-    try {
-      return await goplsReferences(filePath, line, col, cwd, tmpClient);
-    } finally {
-      await tmpClient.shutdown();
-    }
-  }
-
   const locs = await client.references(filePath, line - 1, col - 1);
   return locs.map((loc) => ({
     file: GoplsLspClient.uriToPath(loc.uri),
@@ -202,18 +174,9 @@ export async function goplsImplementation(
   filePath: string,
   line: number,
   col: number,
-  cwd: string,
-  client?: GoplsLspClient,
+  _cwd: string,
+  client: GoplsLspClient,
 ): Promise<GoplsLocation[]> {
-  if (!client) {
-    const tmpClient = new GoplsLspClient(cwd);
-    try {
-      return await goplsImplementation(filePath, line, col, cwd, tmpClient);
-    } finally {
-      await tmpClient.shutdown();
-    }
-  }
-
   const locs = await client.implementation(filePath, line - 1, col - 1);
   return locs.map((loc) => ({
     file: GoplsLspClient.uriToPath(loc.uri),

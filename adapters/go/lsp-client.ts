@@ -68,16 +68,19 @@ const SYMBOL_KIND_MAP: Record<number, string> = {
 
 // --- Client ---
 
+const REQUEST_TIMEOUT_MS = 120_000; // 2 minutes per LSP request
+
 export class GoplsLspClient {
   private proc: ReturnType<typeof Bun.spawn> | null = null;
   private nextId = 1;
   private pendingRequests = new Map<
     number,
-    { resolve: (v: unknown) => void; reject: (e: Error) => void }
+    { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }
   >();
   private buffer = Buffer.alloc(0);
   private initialized = false;
   private initPromise: Promise<void> | null = null;
+  private readLoopPromise: Promise<void> | null = null;
   private repoRoot: string;
 
   constructor(repoRoot: string) {
@@ -99,8 +102,8 @@ export class GoplsLspClient {
       stderr: "pipe",
     });
 
-    // Start reading stdout
-    this.readLoop();
+    // Start reading stdout (store promise for error detection)
+    this.readLoopPromise = this.readLoop();
 
     // Initialize LSP
     await this.sendRequest("initialize", {
@@ -135,7 +138,14 @@ export class GoplsLspClient {
         this.processBuffer();
       }
     } catch {
-      // Process exited
+      // Process exited or crashed
+    } finally {
+      // Reject all pending requests — gopls is gone
+      for (const [id, pending] of this.pendingRequests) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error("gopls process exited with pending requests"));
+        this.pendingRequests.delete(id);
+      }
     }
   }
 
@@ -166,6 +176,7 @@ export class GoplsLspClient {
         const msg = JSON.parse(body);
         if ("id" in msg && this.pendingRequests.has(msg.id)) {
           const pending = this.pendingRequests.get(msg.id)!;
+          clearTimeout(pending.timer);
           this.pendingRequests.delete(msg.id);
           if (msg.error) {
             pending.reject(new Error(`LSP error: ${msg.error.message}`));
@@ -191,7 +202,11 @@ export class GoplsLspClient {
   private sendRequest(method: string, params: unknown): Promise<unknown> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pendingRequests.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.pendingRequests.delete(id);
+        reject(new Error(`LSP request timeout (${REQUEST_TIMEOUT_MS}ms): ${method}`));
+      }, REQUEST_TIMEOUT_MS);
+      this.pendingRequests.set(id, { resolve, reject, timer });
       this.sendMessage({ jsonrpc: "2.0", id, method, params });
     });
   }
@@ -285,13 +300,25 @@ export class GoplsLspClient {
     try {
       await this.sendRequest("shutdown", {});
       this.sendNotification("exit", {});
+      // Give gopls a moment to process the exit notification before killing
+      const exitPromise = this.proc.exited;
+      const timeout = new Promise<void>((r) => setTimeout(r, 2000));
+      await Promise.race([exitPromise, timeout]);
     } catch {
       // Ignore errors during shutdown
     }
-    this.proc.kill();
+    // Clean up any remaining pending requests
+    for (const [id, pending] of this.pendingRequests) {
+      clearTimeout(pending.timer);
+      this.pendingRequests.delete(id);
+    }
+    if (this.proc) {
+      this.proc.kill();
+    }
     this.proc = null;
     this.initialized = false;
     this.initPromise = null;
+    this.readLoopPromise = null;
   }
 
   // --- Mapping helpers ---
@@ -301,6 +328,6 @@ export class GoplsLspClient {
   }
 
   static uriToPath(uri: string): string {
-    return uri.replace(/^file:\/\//, "");
+    return decodeURIComponent(uri.replace(/^file:\/\//, ""));
   }
 }
