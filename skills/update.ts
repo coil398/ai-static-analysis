@@ -102,7 +102,20 @@ export async function updateFacts(
     unitsByLang.set(lang, list);
   }
 
-  // 5. Build removal delta for old data of affected units
+  // 5. Save old diagnostics for affected units (fallback if re-diagnose fails)
+  const oldDiagsByLang = new Map<string, typeof existingFacts.diagnostics>();
+  for (const unit of unitsToReindex) {
+    const lang = unit.id.split(":")[1] ?? "unknown";
+    const unitFileIds = new Set(
+      existingFacts.files.filter((f) => f.unit_id === unit.id).map((f) => f.id),
+    );
+    const diags = existingFacts.diagnostics.filter((d) => unitFileIds.has(d.file_id));
+    const existing = oldDiagsByLang.get(lang) ?? [];
+    existing.push(...diags);
+    oldDiagsByLang.set(lang, existing);
+  }
+
+  // 6. Build removal delta for old data of affected units
   const removalDelta: FactsDelta = {
     added: {},
     removed: {
@@ -113,7 +126,8 @@ export async function updateFacts(
   // Apply removal first
   let facts = applyDelta(existingFacts, removalDelta);
 
-  // 6. Re-index each language's affected units
+  // 7. Re-index each language's affected units
+  const indexedLangs = new Set<string>();
   for (const [lang, langUnits] of unitsByLang) {
     const adapter = registry.getLanguageAdapter(lang);
     if (!adapter) {
@@ -123,13 +137,20 @@ export async function updateFacts(
     try {
       const delta = await adapter.indexUnits(langUnits, profile);
       facts = applyDelta(facts, delta);
+      indexedLangs.add(lang);
     } catch (e) {
       errors.push(`${lang}: indexUnits failed: ${e}`);
     }
   }
 
-  // 7. Re-diagnose affected units
+  // 8. Re-diagnose affected units (restore old diagnostics on failure)
   for (const [lang, langUnits] of unitsByLang) {
+    if (!indexedLangs.has(lang)) {
+      // indexUnits failed — restore old diagnostics for this language
+      const old = oldDiagsByLang.get(lang);
+      if (old) facts.diagnostics.push(...old);
+      continue;
+    }
     const adapter = registry.getLanguageAdapter(lang);
     if (!adapter) continue;
     // Use newly indexed units from facts
@@ -141,7 +162,10 @@ export async function updateFacts(
       const diags = await adapter.diagnose(newUnits, profile);
       facts.diagnostics.push(...diags);
     } catch (e) {
-      warnings.push(`${lang}: diagnose failed: ${e}`);
+      warnings.push(`${lang}: diagnose failed, restoring old diagnostics: ${e}`);
+      // Restore old diagnostics for this language
+      const old = oldDiagsByLang.get(lang);
+      if (old) facts.diagnostics.push(...old);
     }
   }
 
