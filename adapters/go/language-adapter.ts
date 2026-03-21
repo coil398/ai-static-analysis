@@ -57,6 +57,7 @@ export class GoLanguageAdapter implements LanguageAdapter {
       { name: "errcheck", purpose: "unchecked error detection" },
       { name: "gosec", purpose: "security analysis" },
       { name: "govulncheck", purpose: "dependency vulnerability scanning" },
+      { name: "dupl", purpose: "code duplication detection" },
     ];
 
     const missingOptional: string[] = [];
@@ -89,6 +90,7 @@ export class GoLanguageAdapter implements LanguageAdapter {
     errcheck: "github.com/kisielk/errcheck@latest",
     gosec: "github.com/securego/gosec/v2/cmd/gosec@latest",
     govulncheck: "golang.org/x/vuln/cmd/govulncheck@latest",
+    dupl: "github.com/mibk/dupl@latest",
   };
 
   async bootstrap(): Promise<BootstrapResult> {
@@ -570,7 +572,18 @@ export class GoLanguageAdapter implements LanguageAdapter {
       }
     }
 
-    // 6. govulncheck (optional, graceful degradation)
+    // 6. dupl (optional, code duplication detection)
+    if (await whichTool("dupl")) {
+      const duplResult = await exec(
+        ["dupl", "-plumbing", "-threshold", "50", "."],
+        { cwd: repoRoot },
+      );
+      if (duplResult.stdout) {
+        diagnostics.push(...parseDuplOutput(duplResult.stdout, repoRoot));
+      }
+    }
+
+    // 7. govulncheck (optional, graceful degradation)
     if (await whichTool("govulncheck")) {
       const gvResult = await exec(
         ["govulncheck", "-json", "./..."],
@@ -835,6 +848,66 @@ export function parseGosecOutput(
   } catch {
     // Malformed JSON — skip
   }
+  return diagnostics;
+}
+
+/**
+ * Parse dupl -plumbing output.
+ * Format: groups of duplicate blocks separated by blank lines.
+ * Each line within a group: <file>:<startLine>,<endLine>
+ */
+export function parseDuplOutput(
+  stdout: string,
+  repoRoot: string,
+): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
+  const lines = stdout.split("\n");
+  let currentGroup: Array<{ file: string; startLine: number; endLine: number }> = [];
+
+  function flushGroup() {
+    if (currentGroup.length < 2) {
+      currentGroup = [];
+      return;
+    }
+    // Report on each file in the group
+    for (let i = 0; i < currentGroup.length; i++) {
+      const entry = currentGroup[i]!;
+      const others = currentGroup
+        .filter((_, j) => j !== i)
+        .map((o) => `${o.file}:${o.startLine}-${o.endLine}`)
+        .join(", ");
+      const relPath = relative(repoRoot, resolve(repoRoot, entry.file));
+      if (relPath.startsWith("..")) continue;
+      diagnostics.push({
+        file_id: `file:${relPath}`,
+        position: { line: entry.startLine, column: 1 },
+        severity: "info",
+        message: `duplicate code block (lines ${entry.startLine}-${entry.endLine}), also found at: ${others}`,
+        tool: "dupl",
+      });
+    }
+    currentGroup = [];
+  }
+
+  const re = /^(.+?):(\d+),(\d+)$/;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushGroup();
+      continue;
+    }
+    const match = re.exec(trimmed);
+    if (match) {
+      const [, file, startStr, endStr] = match;
+      currentGroup.push({
+        file: file!,
+        startLine: parseInt(startStr!, 10),
+        endLine: parseInt(endStr!, 10),
+      });
+    }
+  }
+  flushGroup(); // flush last group
+
   return diagnostics;
 }
 

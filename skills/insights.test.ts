@@ -11,6 +11,7 @@ import {
   querySmells,
   queryPatterns,
   queryNaming,
+  queryDuplicationHints,
 } from "./insights.ts";
 
 // --- Fixtures ---
@@ -104,6 +105,16 @@ const sampleInsights: Insights = {
       suggestion: "CreateWidget",
       message: "Name 'Foo' is too generic",
       meta: { model: "claude-sonnet-4-6", confidence: 0.85, generated_at: now },
+    },
+  ],
+  duplication_hints: [
+    {
+      target_ids: ["sym:go:main#Foo#func()", "sym:go:main#Bar#func()"],
+      target_kind: "symbol",
+      suggestion: "extract_function",
+      message: "Both functions share identical validation logic. Extract to a validate() helper.",
+      estimated_savings: 15,
+      meta: { model: "claude-sonnet-4-6", confidence: 0.75, generated_at: now },
     },
   ],
 };
@@ -324,5 +335,50 @@ describe("queryNaming", () => {
 
     const result = await queryNaming("sym:go:main#Foo#func()", { repoRoot: tempDir, cacheDir });
     expect(result).toHaveLength(1);
+  });
+});
+
+describe("queryDuplicationHints", () => {
+  let tempDir: string;
+
+  afterEach(async () => {
+    if (tempDir) await rm(tempDir, { recursive: true, force: true });
+  });
+
+  test("returns all hints when no targetId", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "insights-test-"));
+    const cacheDir = join(tempDir, "cache");
+    await writeInsights(cacheDir, sampleInsights);
+
+    const result = await queryDuplicationHints(undefined, { repoRoot: tempDir, cacheDir });
+    expect(result).toHaveLength(1);
+    expect(result[0].suggestion).toBe("extract_function");
+  });
+
+  test("filters by targetId (matches if target_ids includes it)", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "insights-test-"));
+    const cacheDir = join(tempDir, "cache");
+    await writeInsights(cacheDir, sampleInsights);
+
+    const result = await queryDuplicationHints("sym:go:main#Foo#func()", { repoRoot: tempDir, cacheDir });
+    expect(result).toHaveLength(1);
+  });
+
+  test("returns empty for non-matching targetId", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "insights-test-"));
+    const cacheDir = join(tempDir, "cache");
+    await writeInsights(cacheDir, sampleInsights);
+
+    const result = await queryDuplicationHints("sym:go:main#Unknown#func()", { repoRoot: tempDir, cacheDir });
+    expect(result).toHaveLength(0);
+  });
+
+  test("filters by minConfidence", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "insights-test-"));
+    const cacheDir = join(tempDir, "cache");
+    await writeInsights(cacheDir, sampleInsights);
+
+    const result = await queryDuplicationHints(undefined, { repoRoot: tempDir, cacheDir, minConfidence: 0.9 });
+    expect(result).toHaveLength(0);
   });
 });

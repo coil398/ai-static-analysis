@@ -7,6 +7,7 @@ import {
   parseErrcheckOutput,
   parseGosecOutput,
   parseGovulncheckOutput,
+  parseDuplOutput,
   detectCyclicDeps,
 } from "./language-adapter.ts";
 
@@ -427,5 +428,36 @@ describe("parseGovulncheckOutput", () => {
 
   test("handles empty output", () => {
     expect(parseGovulncheckOutput("", "/repo")).toEqual([]);
+  });
+});
+
+describe("parseDuplOutput", () => {
+  test("parses dupl -plumbing output", () => {
+    const output = [
+      "main.go:10,25",
+      "pkg/service.go:5,20",
+      "",
+      "pkg/handler.go:30,45",
+      "pkg/handler.go:50,65",
+      "",
+    ].join("\n");
+    const diags = parseDuplOutput(output, "/repo");
+    // 2 groups × 2 files each = 4 diagnostics
+    expect(diags).toHaveLength(4);
+    expect(diags[0].tool).toBe("dupl");
+    expect(diags[0].severity).toBe("info");
+    expect(diags[0].message).toContain("duplicate code block");
+    expect(diags[0].file_id).toBe("file:main.go");
+    expect(diags[0].position.line).toBe(10);
+  });
+
+  test("skips groups with only one entry", () => {
+    const output = "main.go:10,25\n\n";
+    const diags = parseDuplOutput(output, "/repo");
+    expect(diags).toHaveLength(0);
+  });
+
+  test("handles empty output", () => {
+    expect(parseDuplOutput("", "/repo")).toEqual([]);
   });
 });

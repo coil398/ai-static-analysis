@@ -13,6 +13,7 @@ import {
   queryImpls,
   queryCallers,
   queryCallees,
+  queryDeadCode,
 } from "./query.ts";
 
 const TESTDATA = resolve(
@@ -141,6 +142,23 @@ describe("query-facts", () => {
     expect(result.callees.length).toBeGreaterThan(0);
     const calleeIds = result.callees.map((c) => c.callee_id);
     expect(calleeIds.some((id) => id.includes("NewService"))).toBe(true);
+  }, 30_000);
+
+  test("queryDeadCode returns unreferenced exported symbols", async () => {
+    const opts = await setup();
+    const result = await queryDeadCode(opts);
+    // All exported symbols that are unreferenced should appear
+    // main and init are excluded by design
+    expect(Array.isArray(result.deadSymbols)).toBe(true);
+    // Verify none of the dead symbols are main/init
+    for (const { symbol } of result.deadSymbols) {
+      expect(symbol.name).not.toBe("main");
+      expect(symbol.name).not.toBe("init");
+    }
+    // Verify dead symbols are exported
+    for (const { symbol } of result.deadSymbols) {
+      expect(symbol.exported).toBe(true);
+    }
   }, 30_000);
 
   test("throws when no cached facts exist", async () => {

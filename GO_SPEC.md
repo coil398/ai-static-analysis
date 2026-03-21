@@ -196,8 +196,8 @@ callee[N]: ranges <line>:<col>-<endCol> in <file> from/to function <name> in <fi
 | 機能 | 状態 | ツール |
 |---|---|---|
 | `detect` | 実装済 | go.mod 存在チェック |
-| `doctor` | 実装済 | go + オプションツール5種の存在確認、bootstrap ヒント |
-| `bootstrap` | 実装済 | `go install` で gopls/staticcheck/errcheck/gosec/govulncheck を自動インストール |
+| `doctor` | 実装済 | go + オプションツール6種の存在確認、bootstrap ヒント |
+| `bootstrap` | 実装済 | `go install` で gopls/staticcheck/errcheck/gosec/govulncheck/dupl を自動インストール |
 | `enumerateUnits` | 実装済 | `go list -json` |
 | `indexUnits` (units/files/deps) | 実装済 | `go list -json` |
 | `indexUnits` (symbols) | 実装済 | `gopls` LSP `documentSymbol` |
@@ -211,4 +211,5 @@ callee[N]: ranges <line>:<col>-<endCol> in <file> from/to function <name> in <fi
 | `diagnose` (循環依存検出) | 実装済 | deps グラフ DFS（常時実行） |
 | `diagnose` (gosec) | 実装済 | `gosec -fmt=json`（オプション、未インストール時degrade） |
 | `diagnose` (govulncheck) | 実装済 | `govulncheck -json`（オプション、未インストール時degrade） |
+| `diagnose` (dupl) | 実装済 | `dupl -plumbing -threshold 50`（オプション、未インストール時degrade） |
 | ActionAdapter | 実装済 | `go fmt` / `go build` + `go vet` / `go test` |

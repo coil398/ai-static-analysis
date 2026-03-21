@@ -71,4 +71,7 @@
 - サードパーティ linter 統合: `diagnose` に staticcheck(-f json)、errcheck(-abspath)、gosec(-fmt=json)、govulncheck(-json) を統合。全てオプションで未インストール時は graceful degrade。
 - 循環依存検出: `detectCyclicDeps` で deps グラフを DFS し循環を検出。`diagnose` 内で常時実行（外部ツール不要）。
 - セキュリティ: gosec（コードレベルのセキュリティ問題）と govulncheck（依存脆弱性）を diagnostics に統合。
-- bootstrap(): LanguageAdapter インターフェースに追加。Go adapter は `go install` で gopls/staticcheck/errcheck/gosec/govulncheck を自動インストール。doctor() は不足ツールに対して bootstrap ヒントを表示。
+- bootstrap(): LanguageAdapter インターフェースに追加。Go adapter は `go install` で gopls/staticcheck/errcheck/gosec/govulncheck/dupl を自動インストール。doctor() は不足ツールに対して bootstrap ヒントを表示。
+- デッドコード検出: `queryDeadCode()` を query-facts に追加。exported symbol × refs/call_edges のゼロ参照チェック。main/init/TestXxx/interface実装を除外。
+- コード重複検出: Go adapter の `diagnose` に `dupl -plumbing` を統合。重複ブロックを diagnostics として報告。bootstrap 対象にも追加。
+- 共通化候補: Insights スキーマに `DuplicationHint` 型を追加（extract_function/extract_interface/extract_module/parameterize）。`analyze-insights` が dupl diagnostics を手がかりにソースを分析して共通化提案を生成。`queryDuplicationHints()` で取得。

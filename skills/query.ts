@@ -69,6 +69,14 @@ export interface CalleesResult {
   callees: CallEdge[];
 }
 
+export interface DeadCodeResult {
+  /** Exported symbols with zero incoming references (excluding main/init) */
+  deadSymbols: Array<{
+    symbol: Symbol;
+    unitId: string;
+  }>;
+}
+
 // --- Internal helpers ---
 
 function resolveCacheDir(opts: QueryOptions): string {
@@ -240,4 +248,57 @@ export async function queryCallees(
   const facts = await loadFacts(opts);
   const callees = facts.call_edges.filter((e) => e.caller_id === symbolId);
   return { symbolId, callees };
+}
+
+/**
+ * Detect dead code: exported symbols with zero incoming references.
+ * Excludes entry points (main, init, TestXxx) and interface method implementations.
+ */
+export async function queryDeadCode(
+  opts: QueryOptions,
+): Promise<DeadCodeResult> {
+  const facts = await loadFacts(opts);
+
+  // Build set of symbol IDs that are referenced
+  const referencedIds = new Set<string>();
+  for (const ref of facts.refs) {
+    referencedIds.add(ref.to_symbol_id);
+  }
+  for (const edge of facts.call_edges) {
+    referencedIds.add(edge.callee_id);
+  }
+
+  // Build set of symbol IDs that implement an interface (not dead even if unreferenced)
+  const implementorIds = new Set<string>();
+  for (const rel of facts.type_relations) {
+    if (rel.kind === "implements") {
+      implementorIds.add(rel.from_type_id);
+    }
+  }
+
+  // Entry point names to exclude
+  const entryPointNames = new Set(["main", "init"]);
+
+  const deadSymbols: DeadCodeResult["deadSymbols"] = [];
+
+  for (const sym of facts.symbols) {
+    // Only check exported symbols
+    if (!sym.exported) continue;
+
+    // Skip entry points
+    if (entryPointNames.has(sym.name)) continue;
+
+    // Skip Test/Benchmark/Example functions (Go test entry points)
+    if (/^(Test|Benchmark|Example)/.test(sym.name)) continue;
+
+    // Skip interface method implementations (the struct is used even if not directly referenced)
+    if (implementorIds.has(sym.id)) continue;
+
+    // Dead if not referenced
+    if (!referencedIds.has(sym.id)) {
+      deadSymbols.push({ symbol: sym, unitId: sym.unit_id });
+    }
+  }
+
+  return { deadSymbols };
 }

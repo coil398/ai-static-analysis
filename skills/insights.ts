@@ -16,6 +16,7 @@ import type {
   BugSmell,
   PatternTag,
   NamingIssue,
+  DuplicationHint,
 } from "../core/schema/types.ts";
 import { readFacts, readInsights } from "../core/storage/index.ts";
 
@@ -191,5 +192,18 @@ export async function queryNaming(
     (n) =>
       n.meta.confidence >= minConf &&
       (symbolId === undefined || n.symbol_id === symbolId),
+  );
+}
+
+export async function queryDuplicationHints(
+  targetId: string | undefined,
+  opts: InsightQueryOptions,
+): Promise<DuplicationHint[]> {
+  const insights = await loadInsightsOrThrow(opts);
+  const minConf = opts.minConfidence ?? 0;
+  return insights.duplication_hints.filter(
+    (d) =>
+      d.meta.confidence >= minConf &&
+      (targetId === undefined || d.target_ids.includes(targetId)),
   );
 }
