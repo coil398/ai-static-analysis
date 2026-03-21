@@ -58,6 +58,8 @@ describe("schema types", () => {
           confidence: "certain",
         },
       ],
+      type_relations: [],
+      call_edges: [],
       diagnostics: [
         {
           file_id: "file:pkg/main.go",

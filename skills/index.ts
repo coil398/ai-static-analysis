@@ -58,11 +58,32 @@ export async function indexFacts(options: IndexOptions): Promise<IndexResult> {
     warnings.push("No supported languages detected");
   }
 
-  // 3. Doctor check — skip languages that fail
+  // 3. Doctor check — bootstrap if tools are missing, then recheck
   const activeLangs: string[] = [];
   for (const { lang } of detected) {
     const adapter = registry.getLanguageAdapter(lang)!;
-    const doc = await adapter.doctor();
+    let doc = await adapter.doctor();
+    if (!doc.ok) {
+      // Attempt auto-bootstrap
+      warnings.push(
+        `${lang}: missing tools [${doc.missing_tools.join(", ")}], attempting bootstrap...`,
+      );
+      try {
+        const bsResult = await adapter.bootstrap();
+        if (bsResult.installed.length > 0) {
+          warnings.push(
+            `${lang}: bootstrap installed [${bsResult.installed.join(", ")}]`,
+          );
+        }
+        for (const f of bsResult.failed) {
+          warnings.push(`${lang}: bootstrap failed for ${f.tool}: ${f.reason}`);
+        }
+        // Re-check after bootstrap
+        doc = await adapter.doctor();
+      } catch (e) {
+        warnings.push(`${lang}: bootstrap error: ${e}`);
+      }
+    }
     if (doc.ok) {
       activeLangs.push(lang);
     } else {

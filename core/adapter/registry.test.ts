@@ -5,6 +5,7 @@ import type {
   ActionAdapter,
   DetectResult,
   DoctorResult,
+  BootstrapResult,
 } from "./types.js";
 import type { Unit, FactsDelta, Diagnostic } from "../schema/types.js";
 
@@ -20,6 +21,8 @@ function mockLanguageAdapter(
     diagnose: async () => [] as Diagnostic[],
     doctor: async () =>
       ({ ok: true, missing_tools: [], notes: [] }) as DoctorResult,
+    bootstrap: async () =>
+      ({ installed: [], failed: [], notes: [] }) as BootstrapResult,
   };
 }
 

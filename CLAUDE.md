@@ -45,6 +45,7 @@
 | `run-actions` | コードのフォーマット・チェック・テストを実行 |
 | `analyze-insights` | facts とソースを読んで AI 分析を実行し、insights を生成 |
 | `query-insights` | cache/insights.json から AI 分析結果をクエリ |
+| `bootstrap-tools` | 不足する解析ツールを自動インストール |
 
 ## 実装状態
 
