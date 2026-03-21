@@ -9,7 +9,7 @@
 | ツール | 用途 | 必須 |
 |---|---|---|
 | `go` | パッケージ列挙・ビルド・テスト | MUST |
-| `gopls` | LSP 経由の symbols/refs/type_relations（将来） | SHOULD |
+| `gopls` | CLI 経由の symbols/refs/type_relations/call_edges | SHOULD |
 | `go vet` | 静的診断 | MUST |
 | `go fmt` | フォーマット（`go fmt` 経由で `gofmt` を呼び出す） | MUST |
 
@@ -141,28 +141,67 @@ Go 固有のキーを `build_profile` に含める:
 
 ---
 
-## 10. MVP スコープと将来計画
+## 10. gopls CLI 連携
 
-### MVP（現在）
+`gopls` がインストールされている場合、`indexUnits` は以下のデータを自動取得する。
+`gopls` が無い場合は空配列にdegrade（動作に影響なし）。
 
-以下を実装:
-- `detect`: go.mod 存在チェック
-- `doctor`: go, gopls の存在確認
-- `enumerateUnits`: `go list -json` → Unit[]
-- `indexUnits`: units/files/deps のみ生成
-- `diagnose`: `go vet` → Diagnostic[]
-- ActionAdapter: format/check/test
+### 10.1 symbols: `gopls symbols <file>`
 
-以下は **degrade（空配列を返す）**:
-- `symbols`
-- `refs`
-- `type_relations`
-- `call_edges`
+出力フォーマット:
+```
+<name> <Kind> <line>:<col>-<endLine>:<endCol>
+	<childName> <Kind> <line>:<col>-<endLine>:<endCol>
+```
 
-### 将来
+- 各ファイルに対して実行し、Symbol を生成
+- Kind マッピング: `Function→function`, `Method→method`, `Struct→struct`, `Interface→interface`, `Field→field`, `Variable→variable`, `Constant→constant`
+- メソッドは `(*Receiver).MethodName` 形式で返される
+- `exported` は名前の先頭文字が大文字かで判定
+- Symbol ID: `sym:go:<unit_path>#<kind>#<name>#sig:<sha256_8>`
 
-`gopls` LSP 連携により以下を実装:
-- symbols: `textDocument/documentSymbol`
-- refs: `textDocument/references`
-- type_relations: `textDocument/implementation`
-- call_edges: `callHierarchy/incomingCalls` + `outgoingCalls`
+### 10.2 call_edges: `gopls call_hierarchy <file>:<line>:<col>`
+
+出力フォーマット:
+```
+incoming[N]: function <name> in <file>:<line>:<col>-<endCol>
+identifier: function <name> in <file>:<line>:<col>-<endCol>
+callee[N]: ranges <line>:<col>-<endCol> in <file> from/to function <name> in <file>:<line>:<col>-<endCol>
+```
+
+- 各 function/method シンボルに対して実行
+- callee の定義位置から symbolByPos を逆引きして callee の Symbol ID を解決
+- リポ内 unit に属さない callee（stdlib 等）はスキップ
+- `dispatch`: 現在は全て `"static"`（将来 interface dispatch の判定を追加予定）
+- 各 call_edge から `kind: "call"`, `confidence: "certain"` の Ref も同時生成
+
+### 10.3 type_relations: `gopls implementation <file>:<line>:<col>`
+
+出力フォーマット:
+```
+/path/to/file.go:<line>:<col>-<endCol>
+```
+
+- 各 Interface シンボルに対して実行
+- 返された位置から symbolByPos を逆引きして実装型の Symbol ID を解決
+- `kind: "implements"` の TypeRelation を生成
+
+### 10.4 パフォーマンス考慮
+
+現在は各コマンド呼び出しで gopls プロセスを起動するため、ファイル数×シンボル数に比例した起動コストが発生する。
+将来的には `gopls serve` で LSP サーバーを1プロセス起動し、JSON-RPC で通信する方式に移行してパフォーマンスを改善する。
+
+## 11. 実装状態サマリ
+
+| 機能 | 状態 | ツール |
+|---|---|---|
+| `detect` | 実装済 | go.mod 存在チェック |
+| `doctor` | 実装済 | go, gopls 存在確認 |
+| `enumerateUnits` | 実装済 | `go list -json` |
+| `indexUnits` (units/files/deps) | 実装済 | `go list -json` |
+| `indexUnits` (symbols) | 実装済 | `gopls symbols` |
+| `indexUnits` (refs) | 実装済 | `gopls call_hierarchy` から導出 |
+| `indexUnits` (call_edges) | 実装済 | `gopls call_hierarchy` |
+| `indexUnits` (type_relations) | 実装済 | `gopls implementation` |
+| `diagnose` | 実装済 | `go vet` |
+| ActionAdapter | 実装済 | `go fmt` / `go build` + `go vet` / `go test` |

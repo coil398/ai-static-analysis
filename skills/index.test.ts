@@ -42,7 +42,10 @@ describe("indexFacts", () => {
 
     // Verify deps exist (main imports pkg)
     expect(result.facts.deps.length).toBeGreaterThan(0);
-  });
+
+    // Verify symbols are populated via gopls
+    expect(result.facts.symbols.length).toBeGreaterThan(0);
+  }, 30_000);
 
   test("persists facts and fingerprint to cache", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "index-test-"));
@@ -54,7 +57,7 @@ describe("indexFacts", () => {
     const fpFile = Bun.file(join(cacheDir, "fingerprint.json"));
     expect(await factsFile.exists()).toBe(true);
     expect(await fpFile.exists()).toBe(true);
-  });
+  }, 30_000);
 
   test("second index reuses fingerprint check", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "index-test-"));
@@ -67,5 +70,5 @@ describe("indexFacts", () => {
 
     expect(result.ok).toBe(true);
     expect(result.facts.units.length).toBeGreaterThan(0);
-  });
+  }, 60_000);
 });
