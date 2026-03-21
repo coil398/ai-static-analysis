@@ -40,6 +40,7 @@ export { AdapterRegistry } from "./core/adapter/index.ts";
 // Core storage
 export {
   readFacts,
+  readFactsPartial,
   writeFacts,
   writeFactsJsonl,
   readFingerprint,
@@ -47,6 +48,7 @@ export {
   readInsights,
   writeInsights,
 } from "./core/storage/index.ts";
+export type { FactsField } from "./core/storage/index.ts";
 
 // Core diff
 export { applyDelta, impactUnits } from "./core/diff/index.ts";

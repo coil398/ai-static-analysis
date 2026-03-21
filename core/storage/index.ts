@@ -1,5 +1,6 @@
 export {
   readFacts,
+  readFactsPartial,
   writeFacts,
   writeFactsJsonl,
   readFingerprint,
@@ -7,3 +8,4 @@ export {
   readInsights,
   writeInsights,
 } from "./storage.ts";
+export type { FactsField } from "./storage.ts";

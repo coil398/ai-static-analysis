@@ -78,4 +78,5 @@
 - バレルエクスポート: ルート `index.ts` を追加。全公開 API を re-export。`package.json` の `module`/`main` フィールドと整合。
 - JSONL デフォルト化: `indexFacts`/`updateFacts` が `writeFactsJsonl` を使用するよう変更。`readFacts` は引き続き JSON/JSONL 両方を自動判別。
 - クエリキャッシュ: `skills/query.ts` に in-process facts キャッシュを追加（30秒 TTL）。同一セッション内での重複ディスク読み込みを回避。`clearFactsCache()` でリセット可能。
+- JSONL 分割読み: `readFactsPartial(cacheDir, fields)` で必要なフィールドだけ読み込み可能。各クエリ関数は必要最小限のフィールドのみロード（例: `queryDeps` → deps のみ、`queryCallers` → call_edges のみ）。キャッシュはフィールド単位で増分マージ。
 - テスト堅牢化: gopls 依存テストに `skipIf(!hasGopls)` を追加。gopls 未インストール環境でも全テストが skip/pass する。

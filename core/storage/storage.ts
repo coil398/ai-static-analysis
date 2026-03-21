@@ -49,6 +49,33 @@ async function writeJsonl<T>(path: string, items: T[]): Promise<void> {
 
 // --- Facts ---
 
+/** Fields that can be selectively loaded from JSONL storage. */
+export type FactsField =
+  | "units"
+  | "files"
+  | "deps"
+  | "symbols"
+  | "refs"
+  | "type_relations"
+  | "call_edges"
+  | "diagnostics";
+
+const ALL_FIELDS: FactsField[] = [
+  "units", "files", "deps", "symbols", "refs",
+  "type_relations", "call_edges", "diagnostics",
+];
+
+const FIELD_TO_FILE: Record<FactsField, string> = {
+  units: "units.jsonl",
+  files: "files.jsonl",
+  deps: "deps.jsonl",
+  symbols: "symbols.jsonl",
+  refs: "refs.jsonl",
+  type_relations: "type_relations.jsonl",
+  call_edges: "call_edges.jsonl",
+  diagnostics: "diagnostics.jsonl",
+};
+
 export async function readFacts(cacheDir: string): Promise<Facts | null> {
   // Auto-detect: JSONL dir takes priority over legacy JSON file
   const factsDir = join(cacheDir, FACTS_DIR);
@@ -58,38 +85,52 @@ export async function readFacts(cacheDir: string): Promise<Facts | null> {
   return readJson<Facts>(join(cacheDir, FACTS_FILE));
 }
 
-async function readFactsJsonl(cacheDir: string): Promise<Facts | null> {
+/**
+ * Read only the specified fields from JSONL storage.
+ * Unloaded fields are set to empty arrays.
+ * Falls back to full read for legacy JSON format.
+ */
+export async function readFactsPartial(
+  cacheDir: string,
+  fields: FactsField[],
+): Promise<Facts | null> {
   const factsDir = join(cacheDir, FACTS_DIR);
+  if (!(await dirExists(factsDir))) {
+    // Legacy JSON — no partial read possible, load everything
+    return readJson<Facts>(join(cacheDir, FACTS_FILE));
+  }
+
   const meta = await readJson<Pick<Facts, "schema_version" | "snapshot" | "meta">>(
     join(factsDir, "meta.json"),
   );
   if (!meta) return null;
 
-  const [units, files, deps, symbols, refs, type_relations, call_edges, diagnostics] =
-    await Promise.all([
-      readJsonl(join(factsDir, "units.jsonl")),
-      readJsonl(join(factsDir, "files.jsonl")),
-      readJsonl(join(factsDir, "deps.jsonl")),
-      readJsonl(join(factsDir, "symbols.jsonl")),
-      readJsonl(join(factsDir, "refs.jsonl")),
-      readJsonl(join(factsDir, "type_relations.jsonl")),
-      readJsonl(join(factsDir, "call_edges.jsonl")),
-      readJsonl(join(factsDir, "diagnostics.jsonl")),
-    ]);
+  const fieldSet = new Set(fields);
+  const results = await Promise.all(
+    ALL_FIELDS.map((f) =>
+      fieldSet.has(f)
+        ? readJsonl(join(factsDir, FIELD_TO_FILE[f]))
+        : Promise.resolve([]),
+    ),
+  );
 
   return {
     schema_version: meta.schema_version,
     snapshot: meta.snapshot,
     meta: meta.meta,
-    units: units as Facts["units"],
-    files: files as Facts["files"],
-    deps: deps as Facts["deps"],
-    symbols: symbols as Facts["symbols"],
-    refs: refs as Facts["refs"],
-    type_relations: type_relations as Facts["type_relations"],
-    call_edges: call_edges as Facts["call_edges"],
-    diagnostics: diagnostics as Facts["diagnostics"],
+    units: results[0] as Facts["units"],
+    files: results[1] as Facts["files"],
+    deps: results[2] as Facts["deps"],
+    symbols: results[3] as Facts["symbols"],
+    refs: results[4] as Facts["refs"],
+    type_relations: results[5] as Facts["type_relations"],
+    call_edges: results[6] as Facts["call_edges"],
+    diagnostics: results[7] as Facts["diagnostics"],
   };
+}
+
+async function readFactsJsonl(cacheDir: string): Promise<Facts | null> {
+  return readFactsPartial(cacheDir, ALL_FIELDS);
 }
 
 export async function writeFacts(

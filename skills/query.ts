@@ -11,7 +11,8 @@ import type {
   TypeRelation,
   CallEdge,
 } from "../core/schema/types.ts";
-import { readFacts } from "../core/storage/index.ts";
+import { readFacts, readFactsPartial } from "../core/storage/index.ts";
+import type { FactsField } from "../core/storage/index.ts";
 import { impactUnits } from "../core/diff/index.ts";
 import {
   loadSymbolByName,
@@ -83,9 +84,14 @@ function resolveCacheDir(opts: QueryOptions): string {
   return opts.cacheDir ?? join(opts.repoRoot, "cache");
 }
 
-// In-process cache to avoid redundant disk reads within a session.
-// Keyed by resolved cacheDir path.
-const factsCache = new Map<string, { facts: Facts; loadedAt: number }>();
+// In-process cache with incremental field loading.
+// Tracks which fields have been loaded per cacheDir.
+interface CacheEntry {
+  facts: Facts;
+  loadedFields: Set<FactsField>;
+  loadedAt: number;
+}
+const factsCache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 30_000; // 30 seconds
 
 /** Clear the in-process facts cache (useful after writes or in tests). */
@@ -93,24 +99,60 @@ export function clearFactsCache(): void {
   factsCache.clear();
 }
 
-async function loadFacts(opts: QueryOptions): Promise<Facts> {
+/**
+ * Load only the specified fields from facts.
+ * Cached fields are reused; missing fields are loaded incrementally.
+ */
+async function loadFactsFields(
+  opts: QueryOptions,
+  fields: FactsField[],
+): Promise<Facts> {
   const cacheDir = resolveCacheDir(opts);
 
-  // Check in-process cache
+  // Check cache validity
   const cached = factsCache.get(cacheDir);
   if (cached && Date.now() - cached.loadedAt < CACHE_TTL_MS) {
+    // Determine which fields still need loading
+    const missing = fields.filter((f) => !cached.loadedFields.has(f));
+    if (missing.length === 0) {
+      return cached.facts;
+    }
+    // Load only missing fields and merge
+    const partial = await readFactsPartial(cacheDir, missing);
+    if (!partial) {
+      throw new Error(
+        `No cached facts found. Run index-facts first. (cacheDir: ${cacheDir})`,
+      );
+    }
+    for (const field of missing) {
+      (cached.facts[field] as unknown[]) = partial[field];
+      cached.loadedFields.add(field);
+    }
     return cached.facts;
   }
 
-  const facts = await readFacts(cacheDir);
+  // Fresh load
+  const facts = await readFactsPartial(cacheDir, fields);
   if (!facts) {
     throw new Error(
       `No cached facts found. Run index-facts first. (cacheDir: ${cacheDir})`,
     );
   }
 
-  factsCache.set(cacheDir, { facts, loadedAt: Date.now() });
+  factsCache.set(cacheDir, {
+    facts,
+    loadedFields: new Set(fields),
+    loadedAt: Date.now(),
+  });
   return facts;
+}
+
+/** Load all fields (for queries that need everything or legacy fallback). */
+async function loadFacts(opts: QueryOptions): Promise<Facts> {
+  return loadFactsFields(opts, [
+    "units", "files", "deps", "symbols", "refs",
+    "type_relations", "call_edges", "diagnostics",
+  ]);
 }
 
 // --- Query functions ---
@@ -119,7 +161,7 @@ export async function queryDeps(
   unitId: string,
   opts: QueryOptions,
 ): Promise<DepsResult> {
-  const facts = await loadFacts(opts);
+  const facts = await loadFactsFields(opts, ["deps"]);
   const deps = facts.deps.filter((d) => d.from_unit_id === unitId);
   return { unitId, deps };
 }
@@ -128,7 +170,7 @@ export async function queryRdeps(
   unitId: string,
   opts: QueryOptions,
 ): Promise<RdepsResult> {
-  const facts = await loadFacts(opts);
+  const facts = await loadFactsFields(opts, ["deps"]);
   const rdeps = facts.deps.filter((d) => d.to_unit_id === unitId);
   return { unitId, rdeps };
 }
@@ -138,7 +180,10 @@ export async function queryDefs(
   opts: QueryOptions,
 ): Promise<DefsResult> {
   const cacheDir = resolveCacheDir(opts);
-  const facts = await loadFacts(opts);
+  // Need symbols always; files only for path-based queries
+  const needFiles = typeof query !== "string" && !!(query as { path?: string }).path;
+  const fields: FactsField[] = needFiles ? ["symbols", "files"] : ["symbols"];
+  const facts = await loadFactsFields(opts, fields);
 
   let symbols: Symbol[];
   if (typeof query === "string") {
@@ -192,7 +237,8 @@ export async function queryRefs(
     const refs = index[symbolId] ?? [];
     return { symbolId, refs };
   }
-  const facts = await loadFacts(opts);
+  // Fallback: load only refs
+  const facts = await loadFactsFields(opts, ["refs"]);
   const refs = facts.refs.filter((r) => r.to_symbol_id === symbolId);
   return { symbolId, refs };
 }
@@ -201,7 +247,12 @@ export async function queryDiagnostics(
   scope: "repo" | { unit: string } | { file: string },
   opts: QueryOptions,
 ): Promise<DiagnosticsResult> {
-  const facts = await loadFacts(opts);
+  // unit scope needs files to map unit→file_ids
+  const fields: FactsField[] =
+    scope !== "repo" && "unit" in scope
+      ? ["diagnostics", "files"]
+      : ["diagnostics"];
+  const facts = await loadFactsFields(opts, fields);
 
   if (scope === "repo") {
     return { diagnostics: facts.diagnostics };
@@ -231,7 +282,7 @@ export async function queryImpact(
   changedFiles: string[],
   opts: QueryOptions,
 ): Promise<ImpactResult> {
-  const facts = await loadFacts(opts);
+  const facts = await loadFactsFields(opts, ["files", "deps"]);
   const affectedUnits = impactUnits(changedFiles, facts);
   const affectedUnitSet = new Set(affectedUnits);
 
@@ -249,7 +300,7 @@ export async function queryImpls(
   typeId: string,
   opts: QueryOptions,
 ): Promise<ImplsResult> {
-  const facts = await loadFacts(opts);
+  const facts = await loadFactsFields(opts, ["type_relations"]);
   const implementations = facts.type_relations.filter(
     (r) => r.to_type_id === typeId && r.kind === "implements",
   );
@@ -260,7 +311,7 @@ export async function queryCallers(
   symbolId: string,
   opts: QueryOptions,
 ): Promise<CallersResult> {
-  const facts = await loadFacts(opts);
+  const facts = await loadFactsFields(opts, ["call_edges"]);
   const callers = facts.call_edges.filter((e) => e.callee_id === symbolId);
   return { symbolId, callers };
 }
@@ -269,7 +320,7 @@ export async function queryCallees(
   symbolId: string,
   opts: QueryOptions,
 ): Promise<CalleesResult> {
-  const facts = await loadFacts(opts);
+  const facts = await loadFactsFields(opts, ["call_edges"]);
   const callees = facts.call_edges.filter((e) => e.caller_id === symbolId);
   return { symbolId, callees };
 }
@@ -281,7 +332,9 @@ export async function queryCallees(
 export async function queryDeadCode(
   opts: QueryOptions,
 ): Promise<DeadCodeResult> {
-  const facts = await loadFacts(opts);
+  const facts = await loadFactsFields(opts, [
+    "symbols", "refs", "call_edges", "type_relations",
+  ]);
 
   // Build set of symbol IDs that are referenced
   const referencedIds = new Set<string>();
