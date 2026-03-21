@@ -149,7 +149,12 @@ export async function queryDefs(
       if (query.path) {
         // Match against file path in declaration
         const file = facts.files.find((f) => f.id === s.decl.file_id);
-        if (!file || !file.path.includes(query.path)) return false;
+        if (
+          !file ||
+          (file.path !== query.path &&
+            !file.path.endsWith(`/${query.path}`))
+        )
+          return false;
       }
       return true;
     });
