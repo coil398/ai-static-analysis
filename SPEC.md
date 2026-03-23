@@ -1,5 +1,5 @@
 # static-analysis 仕様書（案）
-※本書は「各プロジェクトで ./claude/skills/static-analysis に clone して使う」前提で、静的解析基盤（facts生成・更新・クエリ・検証）を実装するための指示書です。
+※本書は「各プロジェクトで .claude/tools/static-analysis に clone して使う」前提で、静的解析基盤（facts生成・更新・クエリ・検証）を実装するための指示書です。
 
 ---
 
@@ -8,7 +8,9 @@
 - `static-analysis` は **独立したGitリポジトリ**である。
 - 各プロジェクトで以下に clone して導入する。
 
-  - `.claude/skills/static-analysis/`  （このディレクトリが本レポジトリ）
+  - `.claude/tools/static-analysis/`  （このディレクトリが本レポジトリ）
+  - ※ `.claude/skills/` は Claude Code のスキル自動検出ディレクトリのため避ける
+- 導入手順の詳細は `setup.md` を参照。
 
 - 生成物（キャッシュ等）は Git に含めない。
 - 実解析は **決定論ツール（LSP/コンパイラ/静的解析器等）** を利用し、AIの推測で代替しない。
