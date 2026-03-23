@@ -1,22 +1,21 @@
 # setup
 
-対象プロジェクトに ai-static-analysis を導入し、CLAUDE.md とフック設定を行う。
+対象プロジェクトに ai-static-analysis を導入し、SessionStart フックを設定する。
 
 ---
 
 ## 概要
 
 このスキルは対象プロジェクトに静的解析基盤を導入するためのセットアップを行う。
-以下を自動設定する:
+以下を設定する:
 
-1. CLAUDE.md に静的解析の使い方セクションを追加
-2. SessionStart フックを settings.json に設定
-3. `.gitignore` に `cache/` を追加
-4. 初回の `bootstrap-tools` + `index-facts` を実行
+1. SessionStart フックを settings.json に設定
+2. `.gitignore` に `cache/` を追加
+3. 初回の `bootstrap-tools` + `index-facts` を実行
 
 ## 前提条件
 
-- このリポジトリが対象プロジェクトの `.claude/tools/static-analysis/` にクローン済み
+- このリポジトリが対象プロジェクトの `.claude/skills/ai-static-analysis/` にクローン済み
 - Bun がインストール済み
 
 ## 手順
@@ -25,21 +24,12 @@
 
 ```bash
 cd <対象プロジェクト>
-mkdir -p .claude/tools
-git clone <ai-static-analysis-repo-url> .claude/tools/static-analysis
+git clone <ai-static-analysis-repo-url> .claude/skills/ai-static-analysis
 ```
 
-### Step 2: CLAUDE.md にスニペットを追加
+Claude Code は `.claude/skills/ai-static-analysis/SKILL.md` を自動検出し、このスキルを認識する。
 
-`templates/claude-snippet.md` の内容を対象プロジェクトの `CLAUDE.md` に追記する。
-
-既に `CLAUDE.md` がある場合はファイル末尾に追記。なければ新規作成。
-
-```bash
-cat .claude/tools/static-analysis/templates/claude-snippet.md >> CLAUDE.md
-```
-
-### Step 3: SessionStart フックを設定
+### Step 2: SessionStart フックを設定
 
 対象プロジェクトの `.claude/settings.json` に以下のフック設定を追加する。
 
@@ -51,14 +41,14 @@ cat .claude/tools/static-analysis/templates/claude-snippet.md >> CLAUDE.md
     "SessionStart": [
       {
         "type": "command",
-        "command": "bash .claude/tools/static-analysis/scripts/session-check.sh ."
+        "command": "bash .claude/skills/ai-static-analysis/scripts/session-check.sh ."
       }
     ]
   }
 }
 ```
 
-### Step 4: .gitignore に cache/ を追加
+### Step 3: .gitignore に cache/ を追加
 
 ```bash
 echo "cache/" >> .gitignore
@@ -66,7 +56,7 @@ echo "cache/" >> .gitignore
 
 （既に含まれている場合はスキップ）
 
-### Step 5: 初回セットアップ
+### Step 4: 初回セットアップ
 
 ```bash
 # 解析ツールのインストール
@@ -89,21 +79,21 @@ SessionStart フックが実行され、以下のいずれかが表示される:
 
 ### 通常のワークフロー
 
-CLAUDE.md に記載された推奨ワークフローに従う。セッション開始時にフックのメッセージを確認し、必要に応じて facts を更新する。
+SKILL.md に記載されたワークフローに従う。セッション開始時にフックのメッセージを確認し、必要に応じて facts を更新する。
 
 ## 配置のバリエーション
 
 ### git submodule として導入
 
 ```bash
-git submodule add <repo-url> .claude/tools/static-analysis
+git submodule add <repo-url> .claude/skills/ai-static-analysis
 ```
 
 ### 別の場所にクローンしてシンボリックリンク
 
 ```bash
 git clone <repo-url> ~/tools/static-analysis
-ln -s ~/tools/static-analysis .claude/tools/static-analysis
+ln -s ~/tools/static-analysis .claude/skills/ai-static-analysis
 ```
 
-いずれの場合も `.claude/tools/static-analysis/` にこのリポジトリが見えていれば動作する。
+いずれの場合も `.claude/skills/ai-static-analysis/` にこのリポジトリが見えていれば動作する。

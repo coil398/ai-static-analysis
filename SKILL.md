@@ -1,4 +1,4 @@
-# static-analysis
+# ai-static-analysis
 
 大規模コードベースに対する静的解析基盤。決定論ツール（LSP/コンパイラ/静的解析器）を使い、確定事実（facts）の生成・維持・クエリを提供する。
 
@@ -10,8 +10,8 @@
 
 ```bash
 cd <対象プロジェクト>
-mkdir -p .claude/tools
-git clone <ai-static-analysis-repo-url> .claude/tools/static-analysis
+mkdir -p .claude/skills
+git clone <ai-static-analysis-repo-url> .claude/skills/ai-static-analysis
 ```
 
 ### 2. 導入

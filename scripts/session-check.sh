@@ -5,7 +5,7 @@
 set -euo pipefail
 
 REPO_ROOT="${1:-.}"
-TOOLS_DIR="${REPO_ROOT}/.claude/tools/static-analysis"
+TOOLS_DIR="${REPO_ROOT}/.claude/skills/ai-static-analysis"
 CACHE_DIR="${REPO_ROOT}/cache"
 FINGERPRINT="${CACHE_DIR}/fingerprint.json"
 FACTS_JSON="${CACHE_DIR}/facts.json"

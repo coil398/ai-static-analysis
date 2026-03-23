@@ -4,9 +4,8 @@
 
 ## 配置
 
-本レポジトリは各プロジェクトの `.claude/tools/static-analysis/` にクローンして使う。
-（`.claude/skills/` は Claude Code のスキル自動検出ディレクトリのため、ツールリポジトリの配置先としては使わない）
-エクスポートされるスキル定義（`*.md`）はレポジトリルートに配置し、Claude が直接参照できるようにする。
+本レポジトリは各プロジェクトの `.claude/skills/ai-static-analysis/` にクローンして使う。
+Claude Code はこのディレクトリの `SKILL.md` をエントリポイントとして自動検出する。
 導入手順の詳細は `setup.md` を参照。
 
 ## プロジェクト構造

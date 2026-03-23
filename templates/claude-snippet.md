@@ -4,8 +4,8 @@
 
 ### ツール配置
 
-- 解析ツール: `.claude/tools/static-analysis/`
-- スキル定義: `.claude/tools/static-analysis/*.md`（ルート直下の .md ファイル）
+- 解析ツール: `.claude/skills/ai-static-analysis/`
+- スキル定義: `.claude/skills/ai-static-analysis/*.md`（ルート直下の .md ファイル）
 - キャッシュ: `cache/`（Git 管理外、安全に削除可能）
 
 ### 推奨ワークフロー
@@ -38,11 +38,11 @@
 
 ### スキル実行方法
 
-各スキルは `.claude/tools/static-analysis/` 内のスキル定義（.md）と TypeScript API で実装されている。
+各スキルは `.claude/skills/ai-static-analysis/` 内のスキル定義（.md）と TypeScript API で実装されている。
 
 ```typescript
-import { indexFacts } from "./.claude/tools/static-analysis/skills/index.ts";
-import { queryDeps } from "./.claude/tools/static-analysis/skills/query.ts";
+import { indexFacts } from "./.claude/skills/ai-static-analysis/skills/index.ts";
+import { queryDeps } from "./.claude/skills/ai-static-analysis/skills/query.ts";
 ```
 
 ### 注意事項
