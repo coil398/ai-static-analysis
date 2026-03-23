@@ -4,13 +4,17 @@
 
 ## 配置
 
-本レポジトリは各プロジェクトの `.claude/skills/static-analysis/` にクローンして使う。
-エクスポートされるスキル定義（`*.md`）はレポジトリルートに配置し、Claude が直接参照できるようにする。
+本レポジトリは各プロジェクトの `.claude/skills/ai-static-analysis/` にクローンして使う。
+Claude Code はこのディレクトリの `SKILL.md` をエントリポイントとして自動検出する。
+導入手順の詳細は `setup.md` を参照。
 
 ## プロジェクト構造
 
 - `SPEC.md` — 仕様書（設計の正）
 - `*.md`（ルート直下） — エクスポートされるスキル定義（Claude への指示書）
+- `setup.md` — 対象プロジェクトへの導入スキル
+- `templates/` — 対象プロジェクト用テンプレート（CLAUDE.md スニペット等）
+- `scripts/` — フック用スクリプト（SessionStart チェック等）
 - `.claude/skills/` — 開発用メタスキル（このレポジトリ自体の開発支援）
 - `core/` — 共通コア（スキーマ、fingerprint、dispatcher、ストレージ I/O）
 - `adapters/` — 言語別アダプタ
@@ -39,6 +43,7 @@
 
 | スキル | 説明 |
 |---|---|
+| `setup` | 対象プロジェクトへの導入（CLAUDE.md テンプレ + SessionStart フック設定） |
 | `index-facts` | コードベース全体の静的解析を実行し、facts を生成 |
 | `update-facts` | 変更ファイルのみを再解析し、facts を差分更新 |
 | `query-facts` | facts に対してクエリを実行（deps/rdeps/defs/refs/diagnostics/impact） |
