@@ -83,6 +83,7 @@ Claude Code はこのディレクトリの `SKILL.md` をエントリポイン�
 - クエリキャッシュ: `skills/query.ts` に in-process facts キャッシュ（30秒 TTL）。`clearFactsCache()` でリセット可能。
 - 書き込み中断耐性: `writeFactsJsonl` で `write_complete` マーカーを meta.json に導入。
 - `queryDefs`/`queryRefs` はインデックスがある場合のみ使用し、なければフルスキャンにフォールバック。
+- `queryImpact` は deps の逆引き（rdeps）+ type_relations + call_edges を辿って推移的に影響 unit を展開する（SPEC.md §9.2 準拠）。
 
 ### 差分更新・diff
 

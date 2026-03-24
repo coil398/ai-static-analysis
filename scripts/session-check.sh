@@ -8,7 +8,6 @@ REPO_ROOT="${1:-.}"
 TOOLS_DIR="${REPO_ROOT}/.claude/skills/ai-static-analysis"
 CACHE_DIR="${REPO_ROOT}/cache"
 FINGERPRINT="${CACHE_DIR}/fingerprint.json"
-FACTS_JSON="${CACHE_DIR}/facts.json"
 FACTS_DIR="${CACHE_DIR}/facts"
 
 # ツール配置チェック
@@ -19,13 +18,8 @@ if [ ! -d "$TOOLS_DIR" ]; then
   exit 0
 fi
 
-# facts 存在チェック
-has_facts=false
-if [ -f "$FACTS_JSON" ] || [ -d "$FACTS_DIR" ]; then
-  has_facts=true
-fi
-
-if [ "$has_facts" = false ]; then
+# facts 存在チェック（JSONL 形式: cache/facts/ ディレクトリ）
+if [ ! -d "$FACTS_DIR" ]; then
   echo "[static-analysis] facts が未生成です。index-facts を実行してコードベースを解析してください。"
   exit 0
 fi

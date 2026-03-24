@@ -65,13 +65,10 @@ echo "cache/" >> .gitignore
 
 ### Step 4: 初回セットアップ
 
-```bash
-# 解析ツールのインストール
-# bootstrap-tools を実行
+Claude Code に以下を依頼して実行する（Claude が TypeScript API を呼び出す）:
 
-# コードベースのフルインデックス
-# index-facts を実行（repoRoot: .）
-```
+1. `bootstrap-tools` スキルを実行 — 不足する解析ツール（gopls, staticcheck 等）を自動インストール
+2. `index-facts` スキルを実行（repoRoot: `.`） — コードベース全体を解析して facts を生成
 
 ## セットアップ後の動作
 

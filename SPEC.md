@@ -123,9 +123,7 @@ static-analysis/
 ### 5.1 ストレージ形式
 生成物は`cache/`内に保存する。
 
-フォーマットはJSONとし、以下のどちらでもよい（実装で選択）：
-- **単一ファイル**：`cache/facts.json`
-- **分割**：`cache/facts/*.jsonl`（大規模向け、後述）
+フォーマットは **JSONL 分割形式**（`cache/facts/*.jsonl`）を使用する。各フィールド（units, files, deps, symbols, refs, type_relations, call_edges, diagnostics）が個別の JSONL ファイルとして保存され、クエリ時に必要なフィールドのみ読み込める。書き込み完了は `cache/facts/meta.json` の `write_complete` フラグで管理する。
 
 ### 5.2 P0（必須）データモデル
 AIが大規模でも安全に判断できる最小セットとして、以下をMUSTで実装する。
@@ -147,7 +145,7 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
 
 ---
 
-## 6. facts.json スキーマ（案）
+## 6. facts スキーマ
 
 ### 6.1 トップレベル
 ```json
@@ -238,7 +236,7 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
 }
 ```
 
-### 6.8 TypeRelations（型関係）
+### 6.7 TypeRelations（型関係）
 ```json
 {
   "from_type_id": "sym:go:internal/service#type#UserRepository#sig:...",
@@ -254,7 +252,7 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
   - `converts_to`：型変換可能
   - `instantiates`：ジェネリクスの具体化
 
-### 6.9 CallEdges（コールグラフ）
+### 6.8 CallEdges（コールグラフ）
 ```json
 {
   "caller_id": "sym:go:internal/handler#func#Handle#sig:...",
@@ -272,7 +270,7 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
   - `dynamic`：関数ポインタ / クロージャ経由
   - `interface`：interface メソッド経由（実際の呼び先は `type_relations` の `implements` と組み合わせて展開）
 
-### 6.7 Diagnostics
+### 6.9 Diagnostics
 ```json
 {
   "file_id": "file:internal/service/user.go",
@@ -295,12 +293,11 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
   - `generated: true/false`をfileに持たせる
   - 既定は「解析対象に含める（ただしmetadataで識別可能）」
 
-### 7.2 SHOULD（推奨：重くなったときの逃げ道）
-- `facts.json`が巨大になる場合に備え、JSON Lines分割を許容する
-  - `cache/facts/units.jsonl`, `files.jsonl`, `symbols.jsonl`, `refs.jsonl`, `type_relations.jsonl`, `call_edges.jsonl`, `diagnostics.jsonl`
-- `refs`は件数が爆発しやすいので分割保存を優先する
-- `impact`クエリの高速化のため、派生インデックスを生成してよい
-  - 例：`cache/index/unit_by_file.json`等（あくまで生成物）
+### 7.2 実装済み（大規模対応）
+- JSONL 分割形式を採用済み：`cache/facts/units.jsonl`, `files.jsonl`, `symbols.jsonl`, `refs.jsonl`, `type_relations.jsonl`, `call_edges.jsonl`, `diagnostics.jsonl`
+- クエリ時に必要なフィールドのみ読み込む部分読み込み（`readFactsPartial`）を実装済み
+- 書き込み完了マーカー（`cache/facts/meta.json` の `write_complete` フラグ）で中断耐性を確保
+- 派生インデックスを生成済み：`cache/index/unit_by_file.json`, `symbol_by_name.json`, `refs_by_symbol.json`
 
 ---
 

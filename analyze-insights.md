@@ -132,7 +132,8 @@ await writeInsights("<CACHE_DIR>", insights);
 4. 全 unit の結果を結合して `cache/insights.json` に保存する
 
 ```typescript
-import { loadInsightContext, writeInsights, readFacts } from "./skills/insights.ts";
+import { loadInsightContext } from "./skills/insights.ts";
+import { readFacts, writeInsights } from "./core/storage/index.ts";
 
 // 全 unit を取得し、全ファイルが generated の unit を除外
 const allFacts = await readFacts(cacheDir);
