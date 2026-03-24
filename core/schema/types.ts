@@ -233,9 +233,17 @@ export interface FactsDelta {
     files?: string[];
     deps?: Array<{ from_unit_id: string; to_unit_id: string }>;
     symbols?: string[];
-    refs?: Array<{ from_symbol_id: string; to_symbol_id: string }>;
+    refs?: Array<{
+      from_symbol_id: string;
+      to_symbol_id: string;
+      site: { file_id: string; position: Position };
+    }>;
     type_relations?: Array<{ from_type_id: string; to_type_id: string }>;
-    call_edges?: Array<{ caller_id: string; callee_id: string }>;
+    call_edges?: Array<{
+      caller_id: string;
+      callee_id: string;
+      site: { file_id: string; position: Position };
+    }>;
     diagnostics?: Array<{ file_id: string; position: Position; message: string }>;
   };
 }

@@ -160,7 +160,10 @@ export async function updateFacts(
     );
     if (newUnits.length === 0) continue;
     try {
-      const diags = await adapter.diagnose(newUnits, profile);
+      const langDeps = facts.deps.filter(
+        (d) => d.from_unit_id.startsWith(`unit:${lang}:`),
+      );
+      const diags = await adapter.diagnose(newUnits, profile, langDeps);
       facts.diagnostics.push(...diags);
     } catch (e) {
       warnings.push(`${lang}: diagnose failed, restoring old diagnostics: ${e}`);

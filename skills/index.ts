@@ -9,7 +9,6 @@ import {
   wipeCache,
 } from "../core/fingerprint/index.ts";
 import {
-  readFacts,
   writeFactsJsonl,
   readFingerprint,
   writeFingerprint,
@@ -155,7 +154,11 @@ export async function indexFacts(options: IndexOptions): Promise<IndexResult> {
     );
     if (langUnits.length === 0) continue;
     try {
-      const diags = await adapter.diagnose(langUnits, profile);
+      // Pass already-computed deps to avoid redundant goList calls
+      const langDeps = facts.deps.filter(
+        (d) => d.from_unit_id.startsWith(`unit:${lang}:`),
+      );
+      const diags = await adapter.diagnose(langUnits, profile, langDeps);
       facts.diagnostics.push(...diags);
     } catch (e) {
       warnings.push(`${lang}: diagnose failed: ${e}`);

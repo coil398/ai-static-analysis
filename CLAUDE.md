@@ -82,7 +82,11 @@ Claude Code はこのディレクトリの `SKILL.md` をエントリポイン�
 - コード重複検出: Go adapter の `diagnose` に `dupl -plumbing` を統合。重複ブロックを diagnostics として報告。bootstrap 対象にも追加。
 - 共通化候補: Insights スキーマに `DuplicationHint` 型を追加（extract_function/extract_interface/extract_module/parameterize）。`analyze-insights` が dupl diagnostics を手がかりにソースを分析して共通化提案を生成。`queryDuplicationHints()` で取得。
 - バレルエクスポート: ルート `index.ts` を追加。全公開 API を re-export。`package.json` の `module`/`main` フィールドと整合。
-- JSONL デフォルト化: `indexFacts`/`updateFacts` が `writeFactsJsonl` を使用するよう変更。`readFacts` は引き続き JSON/JSONL 両方を自動判別。
+- JSONL 一本化: legacy JSON（`facts.json` 単一ファイル）サポートを完全削除。`writeFacts`/`readFacts` の JSON フォールバックを除去し、JSONL のみ対応。`readFacts` は `readFactsPartial(cacheDir, ALL_FIELDS)` の薄いラッパー。
 - クエリキャッシュ: `skills/query.ts` に in-process facts キャッシュを追加（30秒 TTL）。同一セッション内での重複ディスク読み込みを回避。`clearFactsCache()` でリセット可能。
 - JSONL 分割読み: `readFactsPartial(cacheDir, fields)` で必要なフィールドだけ読み込み可能。各クエリ関数は必要最小限のフィールドのみロード（例: `queryDeps` → deps のみ、`queryCallers` → call_edges のみ）。キャッシュはフィールド単位で増分マージ。
 - テスト堅牢化: gopls 依存テストに `skipIf(!hasGopls)` を追加。gopls 未インストール環境でも全テストが skip/pass する。
+- 書き込み中断耐性: `writeFactsJsonl` で `write_complete` マーカーを meta.json に導入。書き込み前に false、全 JSONL 書き込み完了後に true。`readFactsPartial` は `write_complete !== true` なら null を返す。
+- diagnose 最適化: `LanguageAdapter.diagnose()` に `deps?: Dep[]` オプション引数を追加。`indexFacts`/`updateFacts` が既に計算済みの deps を渡すことで、Go adapter の `goList` 二重実行を回避。
+- デッドコード検出改善: receiver 型のマッチングを名前検索から `(unit_id, name)` ペアの Map ベース検索に変更し、同名型の誤判定を防止。
+- FactsDelta 型修正: `removed.refs` と `removed.call_edges` に `site` フィールドを追加し、`diff.ts` の比較ロジック（file_id + position で一意特定）と型定義を一致させた。

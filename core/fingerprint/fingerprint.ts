@@ -71,6 +71,14 @@ export interface CompareResult {
   diffs: string[];
 }
 
+/**
+ * Compare two fingerprints to decide if cached facts are reusable.
+ *
+ * repo_state (commit hash) is intentionally NOT compared here.
+ * Commit changes are handled by update-facts (differential update),
+ * not by cache invalidation. Only tool versions and build profile
+ * changes require a full rebuild.
+ */
 export function compareFingerprint(
   current: Fingerprint,
   cached: Fingerprint,

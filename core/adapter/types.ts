@@ -2,6 +2,7 @@
 
 import type {
   Unit,
+  Dep,
   FactsDelta,
   Diagnostic,
   IntentTag,
@@ -61,6 +62,7 @@ export interface LanguageAdapter {
   diagnose(
     units: Unit[],
     profile: Record<string, string>,
+    deps?: Dep[],
   ): Promise<Diagnostic[]>;
   doctor(): Promise<DoctorResult>;
   bootstrap(): Promise<BootstrapResult>;

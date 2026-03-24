@@ -345,15 +345,26 @@ export async function queryDeadCode(
       implementorIds.add(rel.from_type_id);
     }
   }
-  // Also exclude methods on implementing types (they exist to satisfy interfaces)
+  // Also exclude methods on implementing types (they exist to satisfy interfaces).
+  // Build a unit-scoped lookup: (unit_id, receiver_name) → symbol IDs of matching types,
+  // to handle the case where multiple types share a name across different units.
+  const typeByUnitAndName = new Map<string, string[]>();
+  for (const sym of facts.symbols) {
+    if (sym.kind === "struct" || sym.kind === "type") {
+      const key = `${sym.unit_id}::${sym.name}`;
+      const existing = typeByUnitAndName.get(key);
+      if (existing) {
+        existing.push(sym.id);
+      } else {
+        typeByUnitAndName.set(key, [sym.id]);
+      }
+    }
+  }
   for (const sym of facts.symbols) {
     if (sym.kind === "method" && sym.metadata?.receiver) {
-      // Check if the receiver type implements any interface
-      const receiverTypeId = facts.symbols.find(
-        (s) => s.name === sym.metadata!.receiver && s.unit_id === sym.unit_id &&
-               (s.kind === "struct" || s.kind === "type"),
-      )?.id;
-      if (receiverTypeId && implementorIds.has(receiverTypeId)) {
+      const key = `${sym.unit_id}::${sym.metadata.receiver}`;
+      const receiverTypeIds = typeByUnitAndName.get(key);
+      if (receiverTypeIds?.some((id) => implementorIds.has(id))) {
         implementorIds.add(sym.id);
       }
     }

@@ -545,6 +545,7 @@ export class GoLanguageAdapter implements LanguageAdapter {
   async diagnose(
     units: Unit[],
     _profile: Record<string, string>,
+    deps?: Dep[],
   ): Promise<Diagnostic[]> {
     const repoRoot = units[0]?.metadata?.["repo_root"] as string | undefined;
     if (!repoRoot) return [];
@@ -581,9 +582,9 @@ export class GoLanguageAdapter implements LanguageAdapter {
     }
 
     // 4. Circular dependency detection from deps
-    const allUnits = await this.enumerateUnits(repoRoot, _profile);
-    const allDelta = await this.buildDepsOnly(allUnits, repoRoot, _profile);
-    diagnostics.push(...detectCyclicDeps(allDelta));
+    // Reuse deps from indexUnits if provided, otherwise compute them
+    const depsForCycleCheck = deps ?? await this.buildDepsOnly(units, repoRoot, _profile);
+    diagnostics.push(...detectCyclicDeps(depsForCycleCheck));
 
     // 5. gosec (optional, graceful degradation)
     if (await whichTool("gosec")) {

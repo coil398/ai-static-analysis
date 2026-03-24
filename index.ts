@@ -41,7 +41,6 @@ export { AdapterRegistry } from "./core/adapter/index.ts";
 export {
   readFacts,
   readFactsPartial,
-  writeFacts,
   writeFactsJsonl,
   readFingerprint,
   writeFingerprint,
