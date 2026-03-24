@@ -53,7 +53,9 @@ const result = await indexFacts({
 ## 出力ファイル
 
 - `cache/fingerprint.json`: 生成時の環境・ツールバージョン・コミットハッシュ
-- `cache/facts.json`: 生成された facts（units, files, deps, symbols, refs, diagnostics）
+- `cache/facts/`: 生成された facts（JSONL 形式: units.jsonl, files.jsonl, deps.jsonl, symbols.jsonl, refs.jsonl, call_edges.jsonl, type_relations.jsonl, diagnostics.jsonl）
+- `cache/facts/meta.json`: 書き込み完了マーカー（`write_complete` フラグ）
+- `cache/index/`: 派生インデックス（unit_by_file.json, symbol_by_name.json, refs_by_symbol.json）
 
 ## 依存
 

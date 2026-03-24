@@ -64,29 +64,34 @@ Claude Code はこのディレクトリの `SKILL.md` をエントリポイン�
 
 ## 開発メモ
 
-- メタスキル (`create-skill`, `improve-skill`) は core/ の実装作業では出番がなかった。ルート直下のスキル定義 .md を作成する Step 5 以降で初めて使う想定。実際に使ってみてテンプレート・チェックリストが重すぎないか要検証
-- Step 5-6: `applyDelta` は structuredClone で元データを保護。cascade 削除は unit→files→symbols→refs/type_relations/call_edges/diagnostics の順。`impactUnits` は file:prefix の有無を両方許容。
-- Step 5-6: skills 層は `createRegistry()` で毎回新しいレジストリを生成する設計。将来 DI に変えるなら引数に渡す形に変更する。
-- Step 5-6→修正済: Go adapter の cwd 問題を解決。ActionAdapter インターフェースに `repoRoot` を第一引数として追加。unit scope の unitId から `unit:go:` プレフィックスを除去してパスを抽出するよう修正。
-- Go adapter: `exec()` に `env` パラメータを追加し、`goList()` で GOOS/GOARCH/GOTAGS 環境変数を Bun.spawn に渡すよう修正。
-- gopls 連携: `GoplsLspClient` で `gopls serve` を1プロセス起動し JSON-RPC (stdio) で documentSymbol/callHierarchy/references/implementation を通信。`indexUnits` 1回につき1セッション。gopls 未インストール時は空配列にdegrade。
-- Step 7: JSONL は `cache/facts/` ディレクトリの有無で自動判別（ディレクトリ優先）。`readFacts` は後方互換のため JSON フォールバックを維持。インデックスは `cache/index/` に JSON で保存。
-- Step 7: `queryDefs`（name 検索）と `queryRefs` はインデックスがある場合のみ使用し、なければ既存のフルスキャンにフォールバック。
-- Step 8: InsightAdapter インターフェース（外部 AI API 呼び出し）は実装しない設計。Claude Code 自身がスキル定義（.md）を読んで分析を行う。`skills/insights.ts` はコンテキスト準備と query* のみ担当。
-- 参照解析完全化: gopls LSP `textDocument/references` を追加。型参照(type_ref)・フィールドアクセス(field_access)・一般参照(reference)を call 導出の refs に加えて収集。`findEnclosingSymbol` で参照元の関数/メソッドスコープを特定。
-- サードパーティ linter 統合: `diagnose` に staticcheck(-f json)、errcheck(-abspath)、gosec(-fmt=json)、govulncheck(-json) を統合。全てオプションで未インストール時は graceful degrade。
-- 循環依存検出: `detectCyclicDeps` で deps グラフを DFS し循環を検出。`diagnose` 内で常時実行（外部ツール不要）。
-- セキュリティ: gosec（コードレベルのセキュリティ問題）と govulncheck（依存脆弱性）を diagnostics に統合。
-- bootstrap(): LanguageAdapter インターフェースに追加。Go adapter は `go install` で gopls/staticcheck/errcheck/gosec/govulncheck/dupl を自動インストール。doctor() は不足ツールに対して bootstrap ヒントを表示。
-- デッドコード検出: `queryDeadCode()` を query-facts に追加。exported symbol × refs/call_edges のゼロ参照チェック。main/init/TestXxx/interface実装を除外。
-- コード重複検出: Go adapter の `diagnose` に `dupl -plumbing` を統合。重複ブロックを diagnostics として報告。bootstrap 対象にも追加。
-- 共通化候補: Insights スキーマに `DuplicationHint` 型を追加（extract_function/extract_interface/extract_module/parameterize）。`analyze-insights` が dupl diagnostics を手がかりにソースを分析して共通化提案を生成。`queryDuplicationHints()` で取得。
-- バレルエクスポート: ルート `index.ts` を追加。全公開 API を re-export。`package.json` の `module`/`main` フィールドと整合。
-- JSONL 一本化: legacy JSON（`facts.json` 単一ファイル）サポートを完全削除。`writeFacts`/`readFacts` の JSON フォールバックを除去し、JSONL のみ対応。`readFacts` は `readFactsPartial(cacheDir, ALL_FIELDS)` の薄いラッパー。
-- クエリキャッシュ: `skills/query.ts` に in-process facts キャッシュを追加（30秒 TTL）。同一セッション内での重複ディスク読み込みを回避。`clearFactsCache()` でリセット可能。
-- JSONL 分割読み: `readFactsPartial(cacheDir, fields)` で必要なフィールドだけ読み込み可能。各クエリ関数は必要最小限のフィールドのみロード（例: `queryDeps` → deps のみ、`queryCallers` → call_edges のみ）。キャッシュはフィールド単位で増分マージ。
-- テスト堅牢化: gopls 依存テストに `skipIf(!hasGopls)` を追加。gopls 未インストール環境でも全テストが skip/pass する。
-- 書き込み中断耐性: `writeFactsJsonl` で `write_complete` マーカーを meta.json に導入。書き込み前に false、全 JSONL 書き込み完了後に true。`readFactsPartial` は `write_complete !== true` なら null を返す。
-- diagnose 最適化: `LanguageAdapter.diagnose()` に `deps?: Dep[]` オプション引数を追加。`indexFacts`/`updateFacts` が既に計算済みの deps を渡すことで、Go adapter の `goList` 二重実行を回避。
-- デッドコード検出改善: receiver 型のマッチングを名前検索から `(unit_id, name)` ペアの Map ベース検索に変更し、同名型の誤判定を防止。
-- FactsDelta 型修正: `removed.refs` と `removed.call_edges` に `site` フィールドを追加し、`diff.ts` の比較ロジック（file_id + position で一意特定）と型定義を一致させた。
+### 設計判断
+
+- InsightAdapter（外部 AI API 呼び出し）は実装しない設計。Claude Code 自身がスキル定義（.md）を読んで分析を行う。`skills/insights.ts` はコンテキスト準備と query* のみ担当。
+- skills 層は `createRegistry()` で毎回新しいレジストリを生成する設計。将来 DI に変えるなら引数に渡す形に変更する。
+- JSONL 一本化済み。legacy JSON（`facts.json` 単一ファイル）サポートは完全削除。`readFacts` は `readFactsPartial(cacheDir, ALL_FIELDS)` の薄いラッパー。
+
+### Go アダプタ
+
+- gopls 連携: `GoplsLspClient` で `gopls serve` を1プロセス起動し JSON-RPC (stdio) で documentSymbol/callHierarchy/references/implementation を通信。gopls 未インストール時は空配列に degrade。
+- 参照解析: gopls `textDocument/references` で型参照(type_ref)・フィールドアクセス(field_access)・一般参照(reference)を収集。`findEnclosingSymbol` で参照元スコープを特定。
+- linter 統合: staticcheck(-f json)、errcheck(-abspath)、gosec(-fmt=json)、govulncheck(-json)、dupl(-plumbing) を `diagnose` に統合。全てオプション。
+- 循環依存検出: `detectCyclicDeps` で deps グラフを DFS し循環を検出（外部ツール不要）。
+
+### ストレージ・クエリ最適化
+
+- JSONL 分割読み: `readFactsPartial(cacheDir, fields)` で必要なフィールドだけ読み込み。キャッシュはフィールド単位で増分マージ。
+- クエリキャッシュ: `skills/query.ts` に in-process facts キャッシュ（30秒 TTL）。`clearFactsCache()` でリセット可能。
+- 書き込み中断耐性: `writeFactsJsonl` で `write_complete` マーカーを meta.json に導入。
+- `queryDefs`/`queryRefs` はインデックスがある場合のみ使用し、なければフルスキャンにフォールバック。
+
+### 差分更新・diff
+
+- `applyDelta` は structuredClone で元データを保護。cascade 削除は unit→files→symbols→refs/type_relations/call_edges/diagnostics の順。
+- `impactUnits` は file:prefix の有無を両方許容。
+- `FactsDelta.removed.refs` と `removed.call_edges` は `site` フィールドで一意特定。
+
+### その他
+
+- デッドコード検出: receiver 型のマッチングは `(unit_id, name)` ペアの Map ベース検索（同名型の誤判定防止）。
+- `diagnose()` に `deps?: Dep[]` オプション引数を追加し、`goList` 二重実行を回避。
+- メタスキル (`create-skill`, `improve-skill`) は core/ 実装時は不使用。スキル定義 .md 作成時に使用。

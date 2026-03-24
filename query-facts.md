@@ -163,6 +163,6 @@ for (const { symbol } of deadSymbols) {
 
 ### エラーハンドリング
 
-- `cache/facts.json` 不在: `"No cached facts found. Run index-facts first."` をスロー
+- `cache/facts/` 不在（JSONL データなし）: `"No cached facts found. Run index-facts first."` をスロー
 - 不正な unit_id/symbol_id: 空リストを返却
 

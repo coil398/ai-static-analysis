@@ -160,7 +160,7 @@ await writeInsights("<CACHE_DIR>", { schema_version: 1, snapshot: allFacts.snaps
 
 ## 注意事項
 
-- **決定論的 facts と混在させない**：`cache/insights.json` は `cache/facts.json` とは別ファイル。
+- **決定論的 facts と混在させない**：`cache/insights.json` は `cache/facts/`（JSONL）とは別ファイル。
 - **信頼度の正直な表現**：確信が持てない場合は `confidence` を低め（0.3〜0.5）に設定する。
 - **スコープ外の分析は行わない**：`ctx.sources` に含まれないファイルの内容を推測しない。
 - **バグ臭の誤検知に注意**：`high` severity は「かなり確実」な場合のみ使用する。

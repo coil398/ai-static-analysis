@@ -59,7 +59,13 @@ fi
 # git diff で変更ファイル数を確認
 if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   # fingerprint に記録された commit と現在の HEAD を比較
-  fp_commit=$(grep -o '"commit_hash":"[^"]*"' "$FINGERPRINT" 2>/dev/null | head -1 | cut -d'"' -f4)
+  # jq があれば使い、なければ Bun で安全にパース
+  fp_commit=""
+  if command -v jq >/dev/null 2>&1; then
+    fp_commit=$(jq -r '.repo_state.commit_hash // empty' "$FINGERPRINT" 2>/dev/null)
+  elif command -v bun >/dev/null 2>&1; then
+    fp_commit=$(bun -e "try{console.log(JSON.parse(require('fs').readFileSync('$FINGERPRINT','utf8')).repo_state?.commit_hash??'')}catch{}" 2>/dev/null)
+  fi
   if [ -n "$fp_commit" ]; then
     changed_count=$(git -C "$REPO_ROOT" diff --name-only "$fp_commit" HEAD 2>/dev/null | wc -l | tr -d ' ')
     if [ "$changed_count" -gt 0 ]; then

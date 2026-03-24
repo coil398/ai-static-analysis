@@ -1,11 +1,9 @@
 ---
 name: ai-static-analysis
 description: >
-  大規模コードベースに対する静的解析基盤。LSP/コンパイラ/静的解析器を使い、確定事実（facts）の生成・維持・クエリを提供する。
-  コードの依存関係・定義・参照・診断・影響範囲・デッドコード・コール グラフの調査、コードのフォーマット・チェック・テスト実行、
-  AI によるバグ臭・設計パターン・命名品質・重複候補の分析に使う。
-  「静的解析して」「依存関係を調べて」「影響範囲は？」「デッドコードある？」「コード品質を分析して」「facts を更新して」
-  「診断結果を見せて」「この変更の影響は？」といった要望に対応する。
+  大規模コードベースの静的解析基盤。LSP/コンパイラ/静的解析器で確定事実（facts）を生成・維持・クエリする。
+  依存関係・参照・影響範囲・デッドコード・コールグラフの調査、format/check/test 実行、AI によるバグ臭・設計パターン分析に対応。
+  「静的解析して」「依存関係を調べて」「影響範囲は？」「デッドコードある？」「facts を更新して」「この変更の影響は？」等の要望に使う。
 ---
 
 # ai-static-analysis
@@ -46,13 +44,14 @@ git clone <ai-static-analysis-repo-url> .claude/skills/ai-static-analysis
 
 ## 対応言語
 
-Go, TypeScript, Python, C#, Rust
+- **Go**: フル対応（gopls LSP 連携、staticcheck, errcheck, gosec, govulncheck, dupl）
+- **TypeScript, Python, C#, Rust**: 基本対応（unit 列挙・依存解析・format/check/test。LSP シンボル解析は未実装）
 
 ## 前提
 
 - ランタイム: Bun
 - 各言語の解析ツールはローカルにインストールされている前提（不足時は `bootstrap-tools` で自動導入可能）
-- 生成物は `cache/` に保存され、安全に全削除できる
+- 生成物は `<repoRoot>/cache/` に保存され（`cacheDir` オプションで変更可能）、安全に全削除できる
 
 ---
 
