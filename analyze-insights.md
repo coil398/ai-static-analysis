@@ -119,6 +119,45 @@ import { writeInsights } from "./core/storage/index.ts";
 await writeInsights("<CACHE_DIR>", insights);
 ```
 
+### スコープと自動分割
+
+スコープ未指定（全体分析）の場合、コンテキストサイズが大きくなりすぎる。以下の手順で自動分割する:
+
+1. `ctx.facts.units` を取得し、自動生成コードの unit（unit 内の全ファイルが `generated: true`）を除外
+2. 残った units を 1 unit ずつ処理する
+3. 各 unit について:
+   a. `loadInsightContext` に `scope: { unit_ids: [unitId] }` を渡してコンテキストを取得
+   b. そのコンテキストに対して分析を実施
+   c. 結果を蓄積
+4. 全 unit の結果を結合して `cache/insights.json` に保存する
+
+```typescript
+import { loadInsightContext, writeInsights, readFacts } from "./skills/insights.ts";
+
+// 全 unit を取得し、全ファイルが generated の unit を除外
+const allFacts = await readFacts(cacheDir);
+const targetUnits = allFacts.units.filter((unit) => {
+  const unitFiles = allFacts.files.filter((f) => f.unit_id === unit.id);
+  // ファイルが存在し、かつ全てが generated な unit はスキップ
+  return unitFiles.length === 0 || !unitFiles.every((f) => f.generated);
+});
+
+// unit ごとに分析を実施して結果を蓄積
+const allInsights = { intent_tags: [], summaries: [], bug_smells: [], pattern_tags: [], naming_issues: [], duplication_hints: [] };
+for (const unit of targetUnits) {
+  const ctx = await loadInsightContext({
+    repoRoot: "<REPO_ROOT>",
+    cacheDir: "<CACHE_DIR>",
+    scope: { unit_ids: [unit.id] },
+  });
+  // 各 unit に対して分析を実施し、結果を allInsights に追記
+  // ...
+}
+
+// 結合した結果を保存
+await writeInsights("<CACHE_DIR>", { schema_version: 1, snapshot: allFacts.snapshot, ...allInsights });
+```
+
 ## 注意事項
 
 - **決定論的 facts と混在させない**：`cache/insights.json` は `cache/facts.json` とは別ファイル。

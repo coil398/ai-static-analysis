@@ -10,6 +10,7 @@ import {
   parseDuplOutput,
   detectCyclicDeps,
 } from "./language-adapter.ts";
+import { GoplsLspClient } from "./lsp-client.ts";
 import { whichTool } from "./utils.ts";
 
 const TESTDATA = resolve(import.meta.dir, "testdata");
@@ -249,6 +250,50 @@ describe("GoLanguageAdapter", () => {
     const cycleDiags = diags.filter((d) => d.tool === "cycle_detector");
     expect(cycleDiags).toEqual([]);
   }, 30_000);
+
+  test("indexUnits excludes generated files from gopls analysis", async () => {
+    const units = await adapter.enumerateUnits(TESTDATA, {});
+    const delta = await adapter.indexUnits(units, {});
+
+    // generated.go は files に含まれること
+    const genFile = delta.added.files?.find((f) => f.id === "file:pkg/generated.go");
+    expect(genFile).toBeDefined();
+    expect(genFile?.generated).toBe(true);
+
+    // generated ファイルから生成された symbol は含まれないこと（gopls 解析から除外されている）
+    if (hasGopls) {
+      const symbols = delta.added.symbols ?? [];
+      // generated.go 内のシンボルは除外されている
+      const genSymbols = symbols.filter((s) => s.decl.file_id === "file:pkg/generated.go");
+      expect(genSymbols).toHaveLength(0);
+    }
+  }, 30_000);
+
+  test("setExternalLspClient allows injecting an external client", async () => {
+    const adapterWithClient = new GoLanguageAdapter();
+    // null を設定してデフォルト動作に戻せること
+    adapterWithClient.setExternalLspClient(null);
+    expect(adapterWithClient["externalClient"]).toBeNull();
+  });
+
+  test.skipIf(!hasGopls)("setExternalLspClient uses provided client without shutdown", async () => {
+    const adapterWithClient = new GoLanguageAdapter();
+    const externalClient = new GoplsLspClient(TESTDATA);
+    adapterWithClient.setExternalLspClient(externalClient);
+
+    try {
+      const units = await adapterWithClient.enumerateUnits(TESTDATA, {});
+      const delta = await adapterWithClient.indexUnits(units, {});
+      // 外部クライアントを使っても正常に解析できること
+      expect(delta.added.files?.length).toBeGreaterThan(0);
+      if (hasGopls) {
+        expect(delta.added.symbols?.length).toBeGreaterThan(0);
+      }
+    } finally {
+      // 外部クライアントを手動で shutdown する
+      await externalClient.shutdown();
+    }
+  }, 60_000);
 });
 
 describe("parseVetOutput", () => {

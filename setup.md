@@ -29,6 +29,13 @@ git clone <ai-static-analysis-repo-url> .claude/skills/ai-static-analysis
 
 Claude Code は `.claude/skills/ai-static-analysis/SKILL.md` を自動検出し、このスキルを認識する。
 
+### Step 1.5: 依存パッケージのインストール
+
+```bash
+cd .claude/skills/ai-static-analysis
+bun install
+```
+
 ### Step 2: SessionStart フックを設定
 
 対象プロジェクトの `.claude/settings.json` に以下のフック設定を追加する。

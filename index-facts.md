@@ -36,6 +36,9 @@ const result = await indexFacts({
 | `repoRoot` | `string` | Yes | リポジトリルートパス |
 | `cacheDir` | `string` | No | キャッシュディレクトリ（default: `<repoRoot>/cache`） |
 | `profile` | `Record<string, string>` | No | ビルドプロファイル |
+| `onProgress` | `(message: string) => void` | No | 進捗コールバック（default: `console.log`） |
+
+> **注意:** cache ディレクトリはデフォルトで `<repoRoot>/cache` に生成される。スキルディレクトリ内に保存したい場合は `cacheDir` を明示的に指定すること（例: `cacheDir: ".claude/skills/ai-static-analysis/cache"`）。
 
 ### IndexResult
 

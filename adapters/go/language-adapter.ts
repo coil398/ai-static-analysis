@@ -32,6 +32,12 @@ import { GoplsLspClient } from "./lsp-client.ts";
 export class GoLanguageAdapter implements LanguageAdapter {
   readonly lang = "go";
 
+  private externalClient: GoplsLspClient | null = null;
+
+  setExternalLspClient(client: GoplsLspClient | null): void {
+    this.externalClient = client;
+  }
+
   async detect(repoRoot: string): Promise<DetectResult> {
     const goMod = Bun.file(resolve(repoRoot, "go.mod"));
     const exists = await goMod.exists();
@@ -192,7 +198,10 @@ export class GoLanguageAdapter implements LanguageAdapter {
           hash,
           generated,
         });
-        allGoFiles.push({ absPath, relPath, unitId: unit.id });
+        // generated ファイルは gopls 解析対象から除外する
+        if (!generated) {
+          allGoFiles.push({ absPath, relPath, unitId: unit.id });
+        }
       }
 
       // Deps — only repo-internal
@@ -220,7 +229,8 @@ export class GoLanguageAdapter implements LanguageAdapter {
     let callEdges: CallEdge[] = [];
 
     if (hasGopls && allGoFiles.length > 0) {
-      const client = new GoplsLspClient(repoRoot);
+      const useExternalClient = this.externalClient !== null;
+      const client = this.externalClient ?? new GoplsLspClient(repoRoot);
       try {
         const result = await this.indexWithGopls(
           repoRoot,
@@ -233,7 +243,10 @@ export class GoLanguageAdapter implements LanguageAdapter {
         typeRelations = result.typeRelations;
         callEdges = result.callEdges;
       } finally {
-        await client.shutdown();
+        // 外部クライアントの場合は shutdown しない
+        if (!useExternalClient) {
+          await client.shutdown();
+        }
       }
     }
 
