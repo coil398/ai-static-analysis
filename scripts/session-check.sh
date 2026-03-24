@@ -53,12 +53,16 @@ fi
 # git diff で変更ファイル数を確認
 if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   # fingerprint に記録された commit と現在の HEAD を比較
-  # jq があれば使い、なければ Bun で安全にパース
+  # Bun（必須ランタイム）で JSON パース。jq 不要。
   fp_commit=""
-  if command -v jq >/dev/null 2>&1; then
-    fp_commit=$(jq -r '.repo_state.commit_hash // empty' "$FINGERPRINT" 2>/dev/null)
-  elif command -v bun >/dev/null 2>&1; then
-    fp_commit=$(bun -e "try{console.log(JSON.parse(require('fs').readFileSync('$FINGERPRINT','utf8')).repo_state?.commit_hash??'')}catch{}" 2>/dev/null)
+  if command -v bun >/dev/null 2>&1; then
+    fp_commit=$(bun -e "try{const f=JSON.parse(require('fs').readFileSync('$FINGERPRINT','utf8'));console.log(f.repo_state?.commit_hash??f.repo_state?.commit??'')}catch{}" 2>/dev/null)
+  else
+    # bun がない場合は grep ベースのフォールバック（正確性は劣る）
+    fp_commit=$(grep -o '"commit_hash"[[:space:]]*:[[:space:]]*"[^"]*"' "$FINGERPRINT" 2>/dev/null | head -1 | sed 's/.*"commit_hash"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+    if [ -z "$fp_commit" ]; then
+      fp_commit=$(grep -o '"commit"[[:space:]]*:[[:space:]]*"[^"]*"' "$FINGERPRINT" 2>/dev/null | head -1 | sed 's/.*"commit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+    fi
   fi
   if [ -n "$fp_commit" ]; then
     changed_count=$(git -C "$REPO_ROOT" diff --name-only "$fp_commit" HEAD 2>/dev/null | wc -l | tr -d ' ')

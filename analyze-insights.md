@@ -159,6 +159,41 @@ for (const unit of targetUnits) {
 await writeInsights("<CACHE_DIR>", { schema_version: 1, snapshot: allFacts.snapshot, ...allInsights });
 ```
 
+### 巨大 unit の分割戦略
+
+1 unit が非常に大きい場合（ファイル数が多い、あるいは単一ファイルが巨大）、`loadInsightContext` の結果がコンテキストウィンドウに収まらない可能性がある。その場合は以下の手順でファイル単位に分割する:
+
+```typescript
+const ctx = await loadInsightContext({
+  repoRoot: "<REPO_ROOT>",
+  cacheDir: "<CACHE_DIR>",
+  scope: { unit_ids: [unitId] },
+});
+
+// ソースコードの合計文字数をチェック（目安: 100,000文字以上なら分割）
+const totalChars = Object.values(ctx.sources).reduce((sum, s) => sum + s.length, 0);
+const SPLIT_THRESHOLD = 100_000;
+
+if (totalChars > SPLIT_THRESHOLD) {
+  // ファイル単位で分割して分析
+  const fileIds = Object.keys(ctx.sources);
+  for (const fileId of fileIds) {
+    const fileCtx = await loadInsightContext({
+      repoRoot: "<REPO_ROOT>",
+      cacheDir: "<CACHE_DIR>",
+      scope: { file_ids: [fileId] },
+    });
+    // この fileCtx に対して分析を実施し、結果を蓄積
+  }
+} else {
+  // 通常の unit 単位分析
+}
+```
+
+分割時の注意:
+- ファイル単位の分析では cross-file の重複検出（duplication_hints）の精度が下がるため、unit 内の全ファイル名リストを分析プロンプトに含めてヒントとする
+- 分割しても各ファイルの symbols/deps 情報は `ctx.facts` から取得可能なので、コンテキストに含める
+
 ## 注意事項
 
 - **決定論的 facts と混在させない**：`cache/insights.json` は `cache/facts/`（JSONL）とは別ファイル。

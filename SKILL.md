@@ -46,10 +46,67 @@ git clone <ai-static-analysis-repo-url> .claude/skills/ai-static-analysis
 
 ---
 
+## ワークフロー判断ガイド
+
+Claude がこのスキルを使う際の判断フローを以下に示す。
+
+### SessionStart フックの出力に応じた判断
+
+| フックメッセージ | 次のアクション |
+|---|---|
+| `facts が未生成です` | `bootstrap-tools` → `index-facts` の順に実行 |
+| `fingerprint が見つかりません` | `index-facts` でフルリビルド |
+| `N 日前のもの` / `N ファイルが変更` | `update-facts` で差分更新（大量変更時は `index-facts`） |
+| `facts は最新です` | そのまま `query-facts` を使用可能 |
+
+### ユーザー要望に応じた判断
+
+```
+ユーザーの要望を受け取る
+│
+├─ 「影響範囲は？」「どこに影響する？」
+│   → facts が最新か確認 → 古ければ update-facts → query-facts impact
+│
+├─ 「依存関係を調べて」「誰がこの関数呼んでる？」
+│   → query-facts (deps/rdeps/callers/callees)
+│
+├─ 「デッドコードある？」「使ってない関数？」
+│   → query-facts deadCode
+│   ※ Go 以外は LSP 未統合のためシンボルレベルの検出不可（deps/diagnostics は利用可能）
+│
+├─ 「lint 通る？」「フォーマットして」「テスト回して」
+│   → run-actions (check/format/test)
+│
+├─ 「コード品質どう？」「バグ臭ない？」「設計パターンは？」
+│   → analyze-insights → query-insights
+│
+├─ 「静的解析して」「コードベース全体を把握したい」
+│   → index-facts（未生成時）or update-facts → query-facts + analyze-insights
+│
+└─ 「リファクタリング前に確認したい」「変更の安全性を担保して」
+    → update-facts → query-facts impact → run-actions check → run-actions test
+```
+
+### facts 鮮度の自動判断
+
+facts を使うクエリの前に、以下を確認する:
+1. `cache/facts/` が存在するか → なければ `index-facts` を提案
+2. `cache/fingerprint.json` の `repo_state.commit_hash` と現在の HEAD が一致するか → 不一致なら `update-facts` を提案
+3. 一致していればそのまま `query-facts` を実行
+
+---
+
 ## 対応言語
 
-- **Go**: フル対応（gopls LSP 連携、staticcheck, errcheck, gosec, govulncheck, dupl）
-- **TypeScript, Python, C#, Rust**: 基本対応（unit 列挙・依存解析・format/check/test。LSP シンボル解析は未実装）
+| 言語 | unit 列挙 | 依存解析 | シンボル定義 | 参照・呼出 | 型関係 | diagnostics | format/check/test |
+|---|---|---|---|---|---|---|---|
+| **Go** | ✅ | ✅ | ✅ (gopls) | ✅ (gopls) | ✅ (gopls) | ✅ (staticcheck等) | ✅ |
+| **TypeScript** | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ (tsc) | ✅ |
+| **Python** | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| **C#** | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| **Rust** | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+
+> **注意**: Go 以外の言語では LSP 統合が未実装のため、`query-facts` の defs/refs/callers/callees/deadCode/impls はデータが空になる。deps/rdeps/diagnostics/impact（unit レベル）は全言語で利用可能。
 
 ## 前提
 

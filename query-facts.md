@@ -39,6 +39,7 @@ const opts = { repoRoot: "/path/to/repo", cacheDir: "/path/to/cache" };
 |---|---|---|---|
 | `repoRoot` | `string` | Yes | リポジトリルートパス |
 | `cacheDir` | `string` | No | キャッシュディレクトリ（default: `<repoRoot>/cache`） |
+| `maxDepth` | `number` | No | `queryImpact` の推移的展開の最大深さ（default: 無制限） |
 
 ### クエリ関数一覧
 

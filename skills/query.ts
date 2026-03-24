@@ -22,6 +22,8 @@ import {
 export interface QueryOptions {
   repoRoot: string;
   cacheDir?: string;
+  /** Maximum depth for transitive expansion in queryImpact (default: unlimited) */
+  maxDepth?: number;
 }
 
 // --- Result types ---
@@ -38,11 +40,13 @@ export interface RdepsResult {
 
 export interface DefsResult {
   symbols: Symbol[];
+  warnings?: string[];
 }
 
 export interface RefsResult {
   symbolId: string;
   refs: Ref[];
+  warnings?: string[];
 }
 
 export interface DiagnosticsResult {
@@ -58,16 +62,19 @@ export interface ImpactResult {
 export interface ImplsResult {
   typeId: string;
   implementations: TypeRelation[];
+  warnings?: string[];
 }
 
 export interface CallersResult {
   symbolId: string;
   callers: CallEdge[];
+  warnings?: string[];
 }
 
 export interface CalleesResult {
   symbolId: string;
   callees: CallEdge[];
+  warnings?: string[];
 }
 
 export interface DeadCodeResult {
@@ -76,12 +83,30 @@ export interface DeadCodeResult {
     symbol: Symbol;
     unitId: string;
   }>;
+  warnings?: string[];
 }
 
 // --- Internal helpers ---
 
 function resolveCacheDir(opts: QueryOptions): string {
   return opts.cacheDir ?? join(opts.repoRoot, "cache");
+}
+
+const LSP_WARNING =
+  "この言語では LSP 統合が未実装のため、シンボルレベルのクエリ（defs/refs/callers/callees/deadCode/impls）の結果が不完全です。" +
+  "現在シンボル解析がフル対応しているのは Go のみです。deps/rdeps/diagnostics は全言語で利用可能です。";
+
+/**
+ * Check if the facts contain only non-Go units (i.e. no Go adapter was used).
+ * Returns a warning array if symbol-level data is likely empty.
+ */
+function checkSymbolLevelWarnings(facts: Facts): string[] | undefined {
+  if (facts.units.length === 0) return undefined;
+  const hasGoUnits = facts.units.some((u) => u.id.startsWith("unit:go:"));
+  if (!hasGoUnits && facts.symbols.length === 0) {
+    return [LSP_WARNING];
+  }
+  return undefined;
 }
 
 // In-process cache with incremental field loading.
@@ -218,7 +243,8 @@ export async function queryDefs(
     });
   }
 
-  return { symbols };
+  const warnings = symbols.length === 0 ? checkSymbolLevelWarnings(facts) : undefined;
+  return warnings ? { symbols, warnings } : { symbols };
 }
 
 export async function queryRefs(
@@ -232,9 +258,10 @@ export async function queryRefs(
     return { symbolId, refs };
   }
   // Fallback: load only refs
-  const facts = await loadFactsFields(opts, ["refs"]);
+  const facts = await loadFactsFields(opts, ["refs", "units", "symbols"]);
   const refs = facts.refs.filter((r) => r.to_symbol_id === symbolId);
-  return { symbolId, refs };
+  const warnings = refs.length === 0 ? checkSymbolLevelWarnings(facts) : undefined;
+  return warnings ? { symbolId, refs, warnings } : { symbolId, refs };
 }
 
 export async function queryDiagnostics(
@@ -280,18 +307,24 @@ export async function queryImpact(
     "files", "deps", "symbols", "type_relations", "call_edges",
   ]);
 
+  const maxDepth = opts.maxDepth;
+
   // 1. Direct impact: units containing the changed files
   const directUnits = impactUnits(changedFiles, facts);
   const affectedUnitSet = new Set(directUnits);
 
-  // 2. Transitive expansion via deps (rdeps of affected units)
-  const depsRdepQueue = [...directUnits];
+  // 2. Transitive expansion via deps (rdeps of affected units) with optional depth limit
+  //    BFS with depth tracking to prevent O(n²) on large graphs
+  const depsRdepQueue: Array<{ uid: string; depth: number }> = directUnits.map(
+    (uid) => ({ uid, depth: 0 }),
+  );
   while (depsRdepQueue.length > 0) {
-    const uid = depsRdepQueue.pop()!;
+    const { uid, depth } = depsRdepQueue.shift()!;
+    if (maxDepth !== undefined && depth >= maxDepth) continue;
     for (const dep of facts.deps) {
       if (dep.to_unit_id === uid && !affectedUnitSet.has(dep.from_unit_id)) {
         affectedUnitSet.add(dep.from_unit_id);
-        depsRdepQueue.push(dep.from_unit_id);
+        depsRdepQueue.push({ uid: dep.from_unit_id, depth: depth + 1 });
       }
     }
   }
@@ -303,15 +336,20 @@ export async function queryImpact(
       .filter((s) => affectedUnitSet.has(s.unit_id))
       .map((s) => s.id),
   );
+  // Build symbol-to-unit lookup for O(1) access
+  const symbolToUnit = new Map<string, string>();
+  for (const sym of facts.symbols) {
+    symbolToUnit.set(sym.id, sym.unit_id);
+  }
   for (const rel of facts.type_relations) {
     if (affectedSymbolIds.has(rel.to_type_id) || affectedSymbolIds.has(rel.from_type_id)) {
-      // Find the unit of the other side
-      for (const sym of facts.symbols) {
-        if (sym.id === rel.from_type_id || sym.id === rel.to_type_id) {
-          if (!affectedUnitSet.has(sym.unit_id)) {
-            affectedUnitSet.add(sym.unit_id);
-          }
-        }
+      const fromUnit = symbolToUnit.get(rel.from_type_id);
+      const toUnit = symbolToUnit.get(rel.to_type_id);
+      if (fromUnit && !affectedUnitSet.has(fromUnit)) {
+        affectedUnitSet.add(fromUnit);
+      }
+      if (toUnit && !affectedUnitSet.has(toUnit)) {
+        affectedUnitSet.add(toUnit);
       }
     }
   }
@@ -319,9 +357,9 @@ export async function queryImpact(
   // 4. Expand via call_edges: callers of affected symbols are also affected
   for (const edge of facts.call_edges) {
     if (affectedSymbolIds.has(edge.callee_id)) {
-      const callerSym = facts.symbols.find((s) => s.id === edge.caller_id);
-      if (callerSym && !affectedUnitSet.has(callerSym.unit_id)) {
-        affectedUnitSet.add(callerSym.unit_id);
+      const callerUnit = symbolToUnit.get(edge.caller_id);
+      if (callerUnit && !affectedUnitSet.has(callerUnit)) {
+        affectedUnitSet.add(callerUnit);
       }
     }
   }
@@ -342,29 +380,32 @@ export async function queryImpls(
   typeId: string,
   opts: QueryOptions,
 ): Promise<ImplsResult> {
-  const facts = await loadFactsFields(opts, ["type_relations"]);
+  const facts = await loadFactsFields(opts, ["type_relations", "units", "symbols"]);
   const implementations = facts.type_relations.filter(
     (r) => r.to_type_id === typeId && r.kind === "implements",
   );
-  return { typeId, implementations };
+  const warnings = implementations.length === 0 ? checkSymbolLevelWarnings(facts) : undefined;
+  return warnings ? { typeId, implementations, warnings } : { typeId, implementations };
 }
 
 export async function queryCallers(
   symbolId: string,
   opts: QueryOptions,
 ): Promise<CallersResult> {
-  const facts = await loadFactsFields(opts, ["call_edges"]);
+  const facts = await loadFactsFields(opts, ["call_edges", "units", "symbols"]);
   const callers = facts.call_edges.filter((e) => e.callee_id === symbolId);
-  return { symbolId, callers };
+  const warnings = callers.length === 0 ? checkSymbolLevelWarnings(facts) : undefined;
+  return warnings ? { symbolId, callers, warnings } : { symbolId, callers };
 }
 
 export async function queryCallees(
   symbolId: string,
   opts: QueryOptions,
 ): Promise<CalleesResult> {
-  const facts = await loadFactsFields(opts, ["call_edges"]);
+  const facts = await loadFactsFields(opts, ["call_edges", "units", "symbols"]);
   const callees = facts.call_edges.filter((e) => e.caller_id === symbolId);
-  return { symbolId, callees };
+  const warnings = callees.length === 0 ? checkSymbolLevelWarnings(facts) : undefined;
+  return warnings ? { symbolId, callees, warnings } : { symbolId, callees };
 }
 
 /**
@@ -444,5 +485,6 @@ export async function queryDeadCode(
     }
   }
 
-  return { deadSymbols };
+  const warnings = deadSymbols.length === 0 ? checkSymbolLevelWarnings(facts) : undefined;
+  return warnings ? { deadSymbols, warnings } : { deadSymbols };
 }

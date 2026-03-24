@@ -39,8 +39,9 @@ static-analysis/
 ├── skills/      # AIから呼ぶ操作単位（index/update/query/run 等）
 ├── cache/       # 生成物（必ず .gitignore）
 │   ├── fingerprint.json
-│   ├── facts.json  # もしくは facts/ 配下に分割（後述）
-│   └── logs/
+│   ├── facts/   # JSONL 分割形式（units.jsonl, files.jsonl, ... + meta.json）
+│   ├── index/   # 派生インデックス（unit_by_file.json, symbol_by_name.json, refs_by_symbol.json）
+│   └── insights.json  # AI 分析結果（オプション）
 ├── docs/
 └── SPEC.md      # 本書（この仕様書）
 ```
@@ -147,7 +148,24 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
 
 ## 6. facts スキーマ
 
-### 6.1 トップレベル
+### 6.1 ストレージ構成（JSONL 分割形式）
+
+facts は `cache/facts/` ディレクトリ内に JSONL 分割ファイルとして保存される。各フィールドが個別ファイルに対応し、クエリ時に必要なフィールドのみ読み込める。
+
+```
+cache/facts/
+├── meta.json          # メタ情報 + 書き込み完了マーカー
+├── units.jsonl        # 1行1レコード
+├── files.jsonl
+├── deps.jsonl
+├── symbols.jsonl
+├── refs.jsonl
+├── type_relations.jsonl
+├── call_edges.jsonl
+└── diagnostics.jsonl
+```
+
+**meta.json** の構造:
 ```json
 {
   "schema_version": 1,
@@ -155,20 +173,18 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
     "commit": "abcdef1234",
     "created_at": "2026-02-14T00:00:00+09:00"
   },
-  "units": [],
-  "files": [],
-  "deps": [],
-  "symbols": [],
-  "refs": [],
-  "type_relations": [],
-  "call_edges": [],
-  "diagnostics": [],
-  "meta": {
-    "generator": "static-analysis",
-    "notes": ""
-  }
+  "write_complete": true
 }
 ```
+
+**各 JSONL ファイル** には、対応するオブジェクトが1行1レコードで格納される:
+```
+// units.jsonl（例）
+{"id":"unit:go:internal/service","kind":"go_package","name":"service","path":"internal/service","metadata":{"module":"example.com/app"}}
+{"id":"unit:go:internal/db","kind":"go_package","name":"db","path":"internal/db","metadata":{"module":"example.com/app"}}
+```
+
+> **NOTE**: 以前の単一 JSON ファイル形式（`facts.json`）は廃止済み。`readFacts` は内部で `readFactsPartial(cacheDir, ALL_FIELDS)` を呼び出す薄いラッパー。
 
 ### 6.2 Units
 ```json
