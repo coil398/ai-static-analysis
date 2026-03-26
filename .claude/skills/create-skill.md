@@ -17,7 +17,7 @@
 
 ## スキル作成プロセス
 
-新しいスキルを作るときは、以下の Step 1〜5 を順に実行する。
+新しいスキルを作るときは、以下の Step 1〜6 を順に実行する。
 
 ### Step 1: 要件整理
 
@@ -145,6 +145,8 @@
 | AI 操作単位 | `skills/<name>/` | index, update, query |
 | メタ（開発支援） | `.claude/skills/` のみ（定義ファイルのみ） | create-skill |
 
+> **メタスキルのテンプレート準拠について**: メタスキルは実装コードを持たないため、テンプレートの全セクション（配置先、実装言語、処理フロー等）を必須としない。目的・トリガー・手順・チェックリストが明確であれば簡潔な形式でよい。
+
 ### 実装雛形の構成
 
 ```
@@ -179,6 +181,7 @@
 |---|---|---|
 | スキル定義ファイル | `kebab-case.md` | `create-skill.md`, `index-facts.md` |
 | スキル名 | 動詞 + 名詞 | `index-facts`, `query-deps`, `run-check` |
+| 言語別仕様ファイル | `<LANG>_SPEC.md`（大文字、略称不可） | `GO_SPEC.md`, `TS_SPEC.md`, `PYTHON_SPEC.md`, `CSHARP_SPEC.md` |
 | 実装ディレクトリ | 実装言語の慣例に従う | `snake_case`(Python), `camelCase`(TS) |
 | テストファイル | 実装言語の慣例に従う | `*_test.go`, `*.test.ts`, `test_*.py` |
 
@@ -187,6 +190,7 @@
 ## 関連スキル
 
 - `improve-skill`: 既存のスキル定義を改善・更新する際に使用
+- `update-lang-spec`: 言語アダプタの追加・変更時に `<LANG>_SPEC.md` を更新する際に使用
 
 ## 注意事項
 

@@ -70,6 +70,12 @@ Claude Code はこのディレクトリの `SKILL.md` をエントリポイン�
 - skills 層は `createRegistry()` で毎回新しいレジストリを生成する設計。将来 DI に変えるなら引数に渡す形に変更する。
 - JSONL 一本化済み。legacy JSON（`facts.json` 単一ファイル）サポートは完全削除。`readFacts` は `readFactsPartial(cacheDir, ALL_FIELDS)` の薄いラッパー。
 
+### LSP 座標規約
+
+- facts 出力の全 position フィールド（`decl.position`、`site.position` 等）は **1-based** (line, column ともに 1 始まり) で統一する。LSP プロトコルは 0-based を返すため、各言語アダプタで `+1` 変換が必要。
+- 座標変換は `decl.position` と `site.position`（refs/call_edges）の **両方** に適用すること。片方だけ修正すると横断クエリで不整合が起きる。
+- 共通ユーティリティ（`adapters/shared/lsp-client.ts` の `SYMBOL_KIND_MAP` 等）は LSP 仕様 (SymbolKind enum) と照合して検証すること。
+
 ### Go アダプタ
 
 - gopls 連携: `GoplsLspClient` で `gopls serve` を1プロセス起動し JSON-RPC (stdio) で documentSymbol/callHierarchy/references/implementation を通信。gopls 未インストール時は空配列に degrade。

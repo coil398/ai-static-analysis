@@ -10,8 +10,11 @@
 |---|---|---|
 | `dotnet` | ビルド・テスト・フォーマット | MUST |
 | `dotnet-format` | フォーマット（.NET 6+ は組み込み） | MAY |
+| `csharp-ls` | LSP サーバー（シンボル/参照/コールグラフ/型関係） | MAY |
+| `omnisharp` | LSP サーバー（`csharp-ls` のフォールバック） | MAY |
 
 `doctor()` で `dotnet` の存在を確認する。`dotnet` が無い場合は `ok: false`。
+`csharp-ls` / `omnisharp` は省略可能。未インストール時は symbols/refs/type_relations/call_edges が空配列にフォールバック。
 
 ---
 
@@ -61,7 +64,62 @@ Unit {
 
 ---
 
-## 6. Diagnostics
+## 6. LSP 統合（csharp-ls / omnisharp）
+
+`indexUnits()` で LSP サーバーが利用可能な場合、以下を収集する:
+
+### Symbol 収集
+
+`textDocument/documentSymbol` のレスポンスをフラット化（ネスト children を展開）。
+
+**SymbolKind マッピング（LSP → 内部 kind）**:
+
+| LSP kind | 内部 kind |
+|---|---|
+| 5 (Class) | class |
+| 6 (Method) | method |
+| 7 (Property) | property |
+| 8 (Field) | field |
+| 9 (Constructor) | constructor |
+| 10 (Enum) | enum |
+| 11 (Interface) | interface |
+| 12 (Function) | function |
+| 13 (Variable) | variable |
+| 14 (Constant) | constant |
+| 22 (EnumMember) | struct |
+| 23 (Struct/Event) | event |
+| その他 | unknown |
+
+**exported 判定**: LSP documentSymbol はアクセス修飾子を提供しないため、常に `true`。
+
+**Symbol ID**: `sym:cs:<unit_path>#<kind>#<name>#sig:<sha256_8>`
+
+### CallEdge / Ref 収集
+
+method / function / constructor ごとに `textDocument/prepareCallHierarchy` + `callHierarchy/outgoingCalls`。
+各発信呼び出しに CallEdge と kind="call" の Ref を生成。
+
+### TypeRelation 収集
+
+interface ごとに `textDocument/implementation`。
+実装型 → interface の `implements` 関係を生成。
+
+### 非呼び出し Ref 収集
+
+class / interface / struct / field / property / variable / constant に対し `textDocument/references`。
+- class/interface/struct → `type_ref`
+- field/property → `field_access`
+- その他 → `reference`
+
+### LSP サーバー起動
+
+1. `csharp-ls` が PATH にあれば `["csharp-ls"]` で起動
+2. なければ `omnisharp` が PATH にあれば `["omnisharp", "--languageserver"]` で起動
+3. どちらも無ければ graceful degradation（空配列）
+
+---
+
+## 8. Diagnostics
 
 | ツール | 出力形式 | severity マッピング |
 |---|---|---|
@@ -71,7 +129,7 @@ Unit {
 
 ---
 
-## 7. ActionAdapter
+## 9. ActionAdapter
 
 | アクション | コマンド |
 |---|---|
