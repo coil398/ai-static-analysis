@@ -7,10 +7,14 @@ const TESTDATA = resolve(import.meta.dir, "testdata");
 
 // rust-analyzer の存在確認は --version の終了コードで行う
 async function checkRustAnalyzer(): Promise<boolean> {
-  const path = await whichTool("rust-analyzer");
-  if (!path) return false;
-  const result = await exec(["rust-analyzer", "--version"]);
-  return result.exitCode === 0;
+  try {
+    const path = await whichTool("rust-analyzer");
+    if (!path) return false;
+    const result = await exec(["rust-analyzer", "--version"]);
+    return result.exitCode === 0;
+  } catch {
+    return false;
+  }
 }
 
 const hasRustAnalyzer = await checkRustAnalyzer();

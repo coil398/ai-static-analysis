@@ -5,8 +5,13 @@ import { exec } from "../shared/index.ts";
 
 const TESTDATA = resolve(import.meta.dir, "testdata");
 // whichTool だけだと shim が存在するが実体がないケースを検出できないため --version で確認
-const tsServerVersion = await exec(["typescript-language-server", "--version"]);
-const hasTsServer = tsServerVersion.exitCode === 0;
+let hasTsServer = false;
+try {
+  const tsServerVersion = await exec(["typescript-language-server", "--version"]);
+  hasTsServer = tsServerVersion.exitCode === 0;
+} catch {
+  // typescript-language-server not found in PATH
+}
 
 describe("TypeScriptLanguageAdapter", () => {
   const adapter = new TypeScriptLanguageAdapter();
