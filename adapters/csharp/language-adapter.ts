@@ -252,6 +252,8 @@ export class CSharpLanguageAdapter implements LanguageAdapter {
         refs = result.refs;
         typeRelations = result.typeRelations;
         callEdges = result.callEdges;
+      } catch {
+        // C# LSP crashed or exited — degrade gracefully with empty LSP results
       } finally {
         await client.shutdown();
       }

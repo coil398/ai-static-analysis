@@ -8,7 +8,7 @@ export interface ExecResult {
 
 export async function exec(
   cmd: string[],
-  opts?: { cwd?: string; env?: Record<string, string> },
+  opts?: { cwd?: string; env?: Record<string, string>; timeoutMs?: number },
 ): Promise<ExecResult> {
   const proc = Bun.spawn(cmd, {
     cwd: opts?.cwd,
@@ -16,6 +16,14 @@ export async function exec(
     stdout: "pipe",
     stderr: "pipe",
   });
+
+  if (opts?.timeoutMs) {
+    const timeout = opts.timeoutMs;
+    setTimeout(() => {
+      try { proc.kill(); } catch {}
+    }, timeout);
+  }
+
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),

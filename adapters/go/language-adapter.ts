@@ -242,6 +242,8 @@ export class GoLanguageAdapter implements LanguageAdapter {
         refs = result.refs;
         typeRelations = result.typeRelations;
         callEdges = result.callEdges;
+      } catch {
+        // gopls crashed or exited — degrade gracefully with empty LSP results
       } finally {
         // 外部クライアントの場合は shutdown しない
         if (!useExternalClient) {

@@ -143,11 +143,11 @@ export class RustLanguageAdapter implements LanguageAdapter {
           notes.push(`${name}: already installed`);
           continue;
         }
-        const result = await exec(["cargo", "install", pkg]);
+        const result = await exec(["cargo", "install", pkg], { timeoutMs: 120_000 });
         if (result.exitCode === 0) {
           installed.push(name);
         } else {
-          failed.push({ tool: name, reason: result.stderr });
+          failed.push({ tool: name, reason: result.stderr || `cargo install ${pkg} failed or timed out` });
         }
       }
     }
@@ -278,6 +278,8 @@ export class RustLanguageAdapter implements LanguageAdapter {
         refs = result.refs;
         typeRelations = result.typeRelations;
         callEdges = result.callEdges;
+      } catch {
+        // rust-analyzer crashed or exited — degrade gracefully with empty LSP results
       } finally {
         await client.shutdown();
       }
@@ -321,7 +323,12 @@ export class RustLanguageAdapter implements LanguageAdapter {
 
     // Wait for rust-analyzer to finish workspace indexing before querying.
     // Without this, outgoingCalls/implementation may fail with "content modified".
-    await client.waitForWorkspaceReady(30_000);
+    try {
+      await client.waitForWorkspaceReady(30_000);
+    } catch {
+      // rust-analyzer crashed during workspace indexing — return what we have so far
+      return { symbols: [], refs: [], typeRelations: [], callEdges: [] };
+    }
 
     // Track symbols by declaration position for ID lookup
     const symbolByPos = new Map<string, Symbol>(); // "relPath:line:col" -> Symbol
