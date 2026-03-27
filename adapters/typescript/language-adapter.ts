@@ -247,6 +247,8 @@ export class TypeScriptLanguageAdapter implements LanguageAdapter {
         refs = result.refs;
         typeRelations = result.typeRelations;
         callEdges = result.callEdges;
+      } catch {
+        // typescript-language-server crashed or exited — degrade gracefully with empty LSP results
       } finally {
         await client.shutdown();
       }

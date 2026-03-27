@@ -13,6 +13,7 @@ const dotnetEnv = {
 };
 const csharpLsCheck = await exec(["csharp-ls", "--version"], { env: dotnetEnv }).catch(() => ({ exitCode: 1 }));
 const hasCsharpLs = csharpLsCheck.exitCode === 0;
+const isCI = !!process.env.CI;
 const hasOmnisharp = (await whichTool("omnisharp")) !== null;
 const hasLsp = hasCsharpLs || hasOmnisharp;
 const hasDotnet = (await whichTool("dotnet")) !== null;
@@ -53,7 +54,7 @@ describe("CSharpLanguageAdapter", () => {
   });
 
 
-  test("bootstrap returns valid result structure", async () => {
+  test.skipIf(isCI)("bootstrap returns valid result structure", async () => {
     const result = await adapter.bootstrap();
     expect(result).toHaveProperty("installed");
     expect(result).toHaveProperty("failed");

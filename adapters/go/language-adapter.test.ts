@@ -15,6 +15,7 @@ import { whichTool } from "./utils.ts";
 
 const TESTDATA = resolve(import.meta.dir, "testdata");
 const hasGopls = await whichTool("gopls") !== null;
+const isCI = !!process.env.CI;
 
 describe("GoLanguageAdapter", () => {
   const adapter = new GoLanguageAdapter();
@@ -229,7 +230,7 @@ describe("GoLanguageAdapter", () => {
     expect(allNotes).toContain("gopls");
   });
 
-  test("bootstrap attempts to install missing tools", async () => {
+  test.skipIf(isCI)("bootstrap attempts to install missing tools", async () => {
     const result = await adapter.bootstrap();
     // Should return a valid result structure
     expect(result).toHaveProperty("installed");

@@ -257,6 +257,8 @@ export class PythonLanguageAdapter implements LanguageAdapter {
         refs = result.refs;
         typeRelations = result.typeRelations;
         callEdges = result.callEdges;
+      } catch {
+        // pyright crashed or exited — degrade gracefully with empty LSP results
       } finally {
         await client.shutdown();
       }

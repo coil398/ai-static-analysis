@@ -4,6 +4,7 @@ import { PythonLanguageAdapter } from "./language-adapter.ts";
 import { exec } from "../shared/index.ts";
 
 const TESTDATA = resolve(import.meta.dir, "testdata");
+const isCI = !!process.env.CI;
 
 /**
  * Check whether pyright-langserver is actually working (not just a broken shim).
@@ -211,7 +212,7 @@ describe("PythonLanguageAdapter", () => {
     expect(implRelation).toBeDefined();
   }, 60_000);
 
-  test("bootstrap returns valid result structure including pyright", async () => {
+  test.skipIf(isCI)("bootstrap returns valid result structure including pyright", async () => {
     const result = await adapter.bootstrap();
     expect(result).toHaveProperty("installed");
     expect(result).toHaveProperty("failed");

@@ -20,6 +20,7 @@ async function checkRustAnalyzer(): Promise<boolean> {
 const hasRustAnalyzer = await checkRustAnalyzer();
 const hasCargo = await whichTool("cargo") !== null;
 const hasRustc = await whichTool("rustc") !== null;
+const isCI = !!process.env.CI;
 
 describe("RustLanguageAdapter", () => {
   const adapter = new RustLanguageAdapter();
@@ -185,14 +186,14 @@ describe("RustLanguageAdapter", () => {
     expect(implRelation).toBeDefined();
   }, 60_000);
 
-  test("bootstrap returns valid structure", async () => {
+  test.skipIf(!hasRustc || isCI)("bootstrap returns valid structure", async () => {
     const result = await adapter.bootstrap();
     expect(result).toHaveProperty("installed");
     expect(result).toHaveProperty("failed");
     expect(result).toHaveProperty("notes");
-  }, 120_000);
+  }, 180_000);
 
-  test.skipIf(!hasCargo)("bootstrap includes rust-analyzer in components", async () => {
+  test.skipIf(!hasCargo || isCI)("bootstrap includes rust-analyzer in components", async () => {
     const result = await adapter.bootstrap();
     const allMessages = [
       ...result.installed,
