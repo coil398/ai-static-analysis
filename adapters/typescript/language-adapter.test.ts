@@ -4,7 +4,6 @@ import { TypeScriptLanguageAdapter } from "./language-adapter.ts";
 import { exec } from "../shared/index.ts";
 
 const TESTDATA = resolve(import.meta.dir, "testdata");
-const isCI = !!process.env.CI;
 // whichTool だけだと shim が存在するが実体がないケースを検出できないため --version で確認
 let hasTsServer = false;
 try {
@@ -209,7 +208,7 @@ describe("TypeScriptLanguageAdapter", () => {
     expect(storeImplsStorer).toBeDefined();
   }, 60_000);
 
-  test.skipIf(isCI)("bootstrap returns valid structure", async () => {
+  test("bootstrap returns valid structure", async () => {
     const result = await adapter.bootstrap();
     expect(result).toHaveProperty("installed");
     expect(result).toHaveProperty("failed");

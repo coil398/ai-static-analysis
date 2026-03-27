@@ -143,11 +143,11 @@ export class RustLanguageAdapter implements LanguageAdapter {
           notes.push(`${name}: already installed`);
           continue;
         }
-        const result = await exec(["cargo", "install", pkg]);
+        const result = await exec(["cargo", "install", pkg], { timeoutMs: 120_000 });
         if (result.exitCode === 0) {
           installed.push(name);
         } else {
-          failed.push({ tool: name, reason: result.stderr });
+          failed.push({ tool: name, reason: result.stderr || `cargo install ${pkg} failed or timed out` });
         }
       }
     }
