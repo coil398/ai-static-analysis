@@ -3,7 +3,6 @@
 import type {
   Facts,
   FactsDelta,
-  Position,
 } from "../schema/types.ts";
 
 /**
@@ -107,16 +106,13 @@ export function applyDelta(facts: Facts, delta: FactsDelta): Facts {
 
   // Diagnostics: explicit removal + cascade from files
   const removedDiags = delta.removed.diagnostics ?? [];
+  const removedDiagsSet = new Set(
+    removedDiags.map((rd) => `${rd.file_id}::${rd.position.line}:${rd.position.column}::${rd.message}`),
+  );
   result.diagnostics = result.diagnostics.filter((d) => {
     if (!cascadedFileIds.has(d.file_id)) return false;
-    for (const rd of removedDiags) {
-      if (
-        d.file_id === rd.file_id &&
-        positionEqual(d.position, rd.position) &&
-        d.message === rd.message
-      )
-        return false;
-    }
+    if (removedDiagsSet.has(`${d.file_id}::${d.position.line}:${d.position.column}::${d.message}`))
+      return false;
     return true;
   });
 
@@ -161,6 +157,3 @@ export function impactUnits(
   return [...affectedUnitIds];
 }
 
-function positionEqual(a: Position, b: Position): boolean {
-  return a.line === b.line && a.column === b.column;
-}

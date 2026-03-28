@@ -15,7 +15,7 @@ import {
 import { applyDelta, impactUnits } from "../core/diff/index.ts";
 import { buildIndexes } from "../core/index/index.ts";
 import { createRegistry } from "./registry.ts";
-import { indexFacts, type IndexOptions } from "./index.ts";
+import { indexFacts } from "./index.ts";
 
 export interface UpdateOptions {
   repoRoot: string;
@@ -179,6 +179,9 @@ export async function updateFacts(
 
   // 10. Persist + rebuild indexes + update fingerprint
   await writeFactsJsonl(cacheDir, facts);
+  // Invalidate in-process query cache after write (dynamic import to avoid circular dependency)
+  const { clearFactsCache } = await import("./query.ts");
+  clearFactsCache();
   await writeFingerprint(cacheDir, fingerprint);
   await buildIndexes(cacheDir, facts);
 

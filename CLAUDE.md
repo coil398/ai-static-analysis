@@ -87,7 +87,7 @@ Claude Code はこのディレクトリの `SKILL.md` をエントリポイン�
 ### ストレージ・クエリ最適化
 
 - JSONL 分割読み: `readFactsPartial(cacheDir, fields)` で必要なフィールドだけ読み込み。キャッシュはフィールド単位で増分マージ。
-- クエリキャッシュ: `skills/query.ts` に in-process facts キャッシュ（30秒 TTL）。`clearFactsCache()` でリセット可能。
+- クエリキャッシュ: `skills/query.ts` に in-process facts キャッシュ（30秒 TTL）。`clearFactsCache()` でリセット可能。`skills/index.ts` と `skills/update.ts` は `writeFactsJsonl` 直後に自動で `clearFactsCache()` を呼ぶ。
 - 書き込み中断耐性: `writeFactsJsonl` で `write_complete` マーカーを meta.json に導入。
 - `queryDefs`/`queryRefs` はインデックスがある場合のみ使用し、なければフルスキャンにフォールバック。
 - `queryImpact` は deps の逆引き（rdeps）+ type_relations + call_edges を辿って推移的に影響 unit を展開する（SPEC.md §9.2 準拠）。
@@ -103,3 +103,5 @@ Claude Code はこのディレクトリの `SKILL.md` をエントリポイン�
 - デッドコード検出: receiver 型のマッチングは `(unit_id, name)` ペアの Map ベース検索（同名型の誤判定防止）。
 - `diagnose()` に `deps?: Dep[]` オプション引数を追加し、`goList` 二重実行を回避。
 - メタスキル (`create-skill`, `improve-skill`) は core/ 実装時は不使用。スキル定義 .md 作成時に使用。
+- TypeScript linter フック（tsc）は未使用 import・未使用変数・未使用関数を検出してコミットをブロックする。実装時は import 追加・削除のたびに使用箇所の有無を確認すること。
+- `storage.ts` と `query.ts` の間には循環依存がある。`writeFactsJsonl` 後に `clearFactsCache` を呼ぶ場合は動的 import（`await import('./query.ts')`）で回避すること。

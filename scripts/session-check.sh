@@ -56,13 +56,11 @@ if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --git-dir >/d
   # Bun（必須ランタイム）で JSON パース。jq 不要。
   fp_commit=""
   if command -v bun >/dev/null 2>&1; then
-    fp_commit=$(bun -e "try{const f=JSON.parse(require('fs').readFileSync('$FINGERPRINT','utf8'));console.log(f.repo_state?.commit_hash??f.repo_state?.commit??'')}catch{}" 2>/dev/null)
+    fp_commit=$(bun -e "try{const f=JSON.parse(require('fs').readFileSync('$FINGERPRINT','utf8'));console.log(f.repo_state?.commit??'')}catch{}" 2>/dev/null)
   else
     # bun がない場合は grep ベースのフォールバック（正確性は劣る）
-    fp_commit=$(grep -o '"commit_hash"[[:space:]]*:[[:space:]]*"[^"]*"' "$FINGERPRINT" 2>/dev/null | head -1 | sed 's/.*"commit_hash"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
-    if [ -z "$fp_commit" ]; then
-      fp_commit=$(grep -o '"commit"[[:space:]]*:[[:space:]]*"[^"]*"' "$FINGERPRINT" 2>/dev/null | head -1 | sed 's/.*"commit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
-    fi
+    # Fingerprint 型の repo_state.commit フィールドを参照
+    fp_commit=$(grep -o '"commit"[[:space:]]*:[[:space:]]*"[^"]*"' "$FINGERPRINT" 2>/dev/null | head -1 | sed 's/.*"commit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
   fi
   if [ -n "$fp_commit" ]; then
     changed_count=$(git -C "$REPO_ROOT" diff --name-only "$fp_commit" HEAD 2>/dev/null | wc -l | tr -d ' ')

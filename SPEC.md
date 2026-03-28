@@ -335,23 +335,16 @@ cache/facts/
 
 ※ `scope`は`repo|unit|files|paths`いずれかで指定できること。
 
-### 8.3 InsightAdapter（SHOULD — AI非決定論解析）
-決定論ツールでは取れない「意味」の層をAIで生成する。
-Facts（決定論）とは完全に分離し、`cache/insights.json` に保存する。
-
-- `tag_intents(scope) -> IntentTag[]`
-- `summarize(scope) -> Summary[]`
-- `detect_bug_smells(scope) -> BugSmell[]`
-- `detect_patterns(scope) -> PatternTag[]`
-- `review_naming(scope) -> NamingIssue[]`
-
-※ `scope` は `{unit_ids?, symbol_ids?, file_ids?}` で対象を絞れる（省略時は全体）。
+### 8.3 InsightAdapter（設計方針: 実装しない）
+決定論ツールでは取れない「意味」の層を AI で生成するが、外部 AI API を呼び出す InsightAdapter は実装しない設計とする。
+Claude Code 自身がスキル定義（analyze-insights.md）を読んで分析を行い、結果を `cache/insights.json` に保存する。
+`skills/insights.ts` はコンテキスト準備（facts + ソースコード読み込み）と query 関数のみを担当する。
 
 #### 設計原則
-- **分離**：insights は facts と混ぜない。別ファイル、別クエリ、オプトイン参照
-- **トレーサビリティ**：全項目に `meta: {model, confidence, generated_at}` を付与
-- **再生成安全**：`cache/insights.json` は安全に全削除できる。モデル更新時は再生成
-- **fingerprint 非依存**：insights の有効性は facts の fingerprint とは別管理（モデル変更で invalidate）
+- 分離: insights は facts と混ぜない。別ファイル、別クエリ、オプトイン参照
+- トレーサビリティ: 全項目に `meta: {model, confidence, generated_at}` を付与
+- 再生成安全: `cache/insights.json` は安全に全削除できる。モデル更新時は再生成
+- fingerprint 非依存: insights の有効性は facts の fingerprint とは別管理（モデル変更で invalidate）
 
 ### 8.4 言語別仕様
 各言語固有の仕様は `<LANG>_SPEC.md`（ルート直下）に記載する。
@@ -386,8 +379,9 @@ Facts（決定論）とは完全に分離し、`cache/insights.json` に保存�
 ### 9.3 Insight（SHOULD — AI非決定論解析）
 **`analyze(scope?)`**：
 1. facts が存在することを確認（insights は facts に依存）
-2. scope 内の unit/symbol/file に対して InsightAdapter を実行
-3. `cache/insights.json` に保存
+2. `skills/insights.ts` の `loadInsightContext` でコンテキスト（facts + ソースコード）を準備
+3. Claude 自身がスキル定義（analyze-insights.md）に従って分析を実行
+4. `cache/insights.json` に保存
 
 **`query_insights(kind, filter?)`**：
 - `intents(target_id?)`：意図タグの一覧・検索
@@ -516,7 +510,28 @@ smell の種類（拡張可能）：
 
 用途：リファクタリング時の構造理解、一貫性チェック。
 
-### 14.6 NamingIssue（命名品質）
+### 14.6 DuplicationHint（重複・共通化ヒント）
+類似コードの検出と共通化の提案を行う。
+
+```json
+{
+  "target_ids": ["sym:go:pkg/a#func#DoX#sig:...", "sym:go:pkg/b#func#DoY#sig:..."],
+  "target_kind": "symbol",
+  "suggestion": "extract_function",
+  "message": "DoX and DoY share identical validation logic (lines 10-25). Extract to a shared helper.",
+  "estimated_savings": 15,
+  "meta": { "model": "claude-sonnet-4-5-20250929", "confidence": 0.80, "generated_at": "2026-02-15T00:00:00Z" }
+}
+```
+
+suggestion の種類:
+- `extract_function`: 共通関数に切り出し
+- `extract_interface`: インターフェースに抽象化
+- `extract_module`: モジュール/パッケージに分離
+- `parameterize`: パラメータ化で共通化
+- `other`
+
+### 14.7 NamingIssue（命名品質）
 紛らわしい・一貫性のない命名を指摘する。
 
 ```json
@@ -537,7 +552,7 @@ issue の種類：
 - `too_generic`：汎用的すぎて意味が不明
 - `other`
 
-### 14.7 共通メタデータ（InsightMeta）
+### 14.8 共通メタデータ（InsightMeta）
 全 insight に必須で付与する。
 
 | フィールド | 型 | 説明 |

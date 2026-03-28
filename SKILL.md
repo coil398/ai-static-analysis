@@ -72,7 +72,7 @@ Claude がこのスキルを使う際の判断フローを以下に示す。
 │
 ├─ 「デッドコードある？」「使ってない関数？」
 │   → query-facts deadCode
-│   ※ Go 以外は LSP 未統合のためシンボルレベルの検出不可（deps/diagnostics は利用可能）
+│   ※ LSP サーバー未インストールの場合はシンボルレベルの検出不可（deps/diagnostics は利用可能）
 │
 ├─ 「lint 通る？」「フォーマットして」「テスト回して」
 │   → run-actions (check/format/test)
@@ -91,7 +91,7 @@ Claude がこのスキルを使う際の判断フローを以下に示す。
 
 facts を使うクエリの前に、以下を確認する:
 1. `cache/facts/` が存在するか → なければ `index-facts` を提案
-2. `cache/fingerprint.json` の `repo_state.commit_hash` と現在の HEAD が一致するか → 不一致なら `update-facts` を提案
+2. `cache/fingerprint.json` の `repo_state.commit` と現在の HEAD が一致するか → 不一致なら `update-facts` を提案
 3. 一致していればそのまま `query-facts` を実行
 
 ---

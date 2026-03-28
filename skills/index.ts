@@ -164,6 +164,9 @@ export async function indexFacts(options: IndexOptions): Promise<IndexResult> {
   // 7. Persist
   progress("[7/7] Persisting facts and indexes...");
   await writeFactsJsonl(cacheDir, facts);
+  // Invalidate in-process query cache after write (dynamic import to avoid circular dependency)
+  const { clearFactsCache } = await import("./query.ts");
+  clearFactsCache();
   await writeFingerprint(cacheDir, fingerprint);
   await buildIndexes(cacheDir, facts);
 

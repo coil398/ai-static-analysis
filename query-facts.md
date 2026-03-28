@@ -160,7 +160,7 @@ for (const { symbol } of deadSymbols) {
 
 ### 処理
 
-各関数は `readFacts()` → メモリ上でフィルタ。MVP では派生インデックス不要。
+各関数は `loadFactsFields()` で必要なフィールドのみ JSONL から読み込み、メモリ上でフィルタする。30秒 TTL の in-process キャッシュにより、同一セッション内の連続クエリは高速。`queryDefs` は `symbol_by_name` インデックス、`queryRefs` は `refs_by_symbol` インデックスを利用し、フルスキャンを回避する（インデックス未生成時はフォールバック）。
 
 ### エラーハンドリング
 

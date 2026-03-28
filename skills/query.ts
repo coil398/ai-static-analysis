@@ -3,7 +3,6 @@
 import { join } from "node:path";
 import type {
   Facts,
-  Unit,
   Dep,
   Symbol,
   Ref,
@@ -92,18 +91,30 @@ function resolveCacheDir(opts: QueryOptions): string {
   return opts.cacheDir ?? join(opts.repoRoot, "cache");
 }
 
+/** Unit ID prefixes for languages with LSP integration (symbol-level data available). */
+const LSP_SUPPORTED_PREFIXES = [
+  "unit:go:",
+  "unit:ts:",
+  "unit:python:",
+  "unit:csharp:",
+  "unit:rust:",
+];
+
 const LSP_WARNING =
-  "この言語では LSP 統合が未実装のため、シンボルレベルのクエリ（defs/refs/callers/callees/deadCode/impls）の結果が不完全です。" +
-  "現在シンボル解析がフル対応しているのは Go のみです。deps/rdeps/diagnostics は全言語で利用可能です。";
+  "LSP サーバーが未インストールか、対応言語以外のユニットのみです。" +
+  "シンボルレベルのクエリ（defs/refs/callers/callees/deadCode/impls）の結果が不完全な可能性があります。" +
+  "LSP 統合対応言語: Go, TypeScript, Python, C#, Rust。deps/rdeps/diagnostics は全言語で利用可能です。";
 
 /**
- * Check if the facts contain only non-Go units (i.e. no Go adapter was used).
- * Returns a warning array if symbol-level data is likely empty.
+ * Check if the facts contain units from LSP-supported languages.
+ * Returns a warning array if no LSP-supported units exist and symbols are empty.
  */
 function checkSymbolLevelWarnings(facts: Facts): string[] | undefined {
   if (facts.units.length === 0) return undefined;
-  const hasGoUnits = facts.units.some((u) => u.id.startsWith("unit:go:"));
-  if (!hasGoUnits && facts.symbols.length === 0) {
+  const hasLspUnits = facts.units.some((u) =>
+    LSP_SUPPORTED_PREFIXES.some((prefix) => u.id.startsWith(prefix)),
+  );
+  if (!hasLspUnits && facts.symbols.length === 0) {
     return [LSP_WARNING];
   }
   return undefined;
@@ -314,52 +325,68 @@ export async function queryImpact(
   const affectedUnitSet = new Set(directUnits);
 
   // 2. Transitive expansion via deps (rdeps of affected units) with optional depth limit
-  //    BFS with depth tracking to prevent O(n²) on large graphs
+  //    Build reverse dependency map once for O(units + deps) traversal
+  const rdepMap = new Map<string, string[]>();
+  for (const dep of facts.deps) {
+    const existing = rdepMap.get(dep.to_unit_id);
+    if (existing) {
+      existing.push(dep.from_unit_id);
+    } else {
+      rdepMap.set(dep.to_unit_id, [dep.from_unit_id]);
+    }
+  }
   const depsRdepQueue: Array<{ uid: string; depth: number }> = directUnits.map(
     (uid) => ({ uid, depth: 0 }),
   );
   while (depsRdepQueue.length > 0) {
     const { uid, depth } = depsRdepQueue.shift()!;
     if (maxDepth !== undefined && depth >= maxDepth) continue;
-    for (const dep of facts.deps) {
-      if (dep.to_unit_id === uid && !affectedUnitSet.has(dep.from_unit_id)) {
-        affectedUnitSet.add(dep.from_unit_id);
-        depsRdepQueue.push({ uid: dep.from_unit_id, depth: depth + 1 });
+    const rdeps = rdepMap.get(uid);
+    if (!rdeps) continue;
+    for (const fromUid of rdeps) {
+      if (!affectedUnitSet.has(fromUid)) {
+        affectedUnitSet.add(fromUid);
+        depsRdepQueue.push({ uid: fromUid, depth: depth + 1 });
       }
     }
   }
 
-  // 3. Expand via type_relations: if an interface/type in an affected unit
-  //    is implemented/embedded by another unit, that unit is also affected
-  const affectedSymbolIds = new Set(
-    facts.symbols
-      .filter((s) => affectedUnitSet.has(s.unit_id))
-      .map((s) => s.id),
-  );
-  // Build symbol-to-unit lookup for O(1) access
+  // 3. Build symbol-to-unit lookup for O(1) access
   const symbolToUnit = new Map<string, string>();
   for (const sym of facts.symbols) {
     symbolToUnit.set(sym.id, sym.unit_id);
   }
-  for (const rel of facts.type_relations) {
-    if (affectedSymbolIds.has(rel.to_type_id) || affectedSymbolIds.has(rel.from_type_id)) {
-      const fromUnit = symbolToUnit.get(rel.from_type_id);
-      const toUnit = symbolToUnit.get(rel.to_type_id);
-      if (fromUnit && !affectedUnitSet.has(fromUnit)) {
-        affectedUnitSet.add(fromUnit);
-      }
-      if (toUnit && !affectedUnitSet.has(toUnit)) {
-        affectedUnitSet.add(toUnit);
+
+  // 4. Transitive expansion via type_relations and call_edges (SPEC.md §9.2)
+  //    Repeatedly discover new affected units until no new units are found.
+  let prevSize = 0;
+  while (affectedUnitSet.size !== prevSize) {
+    prevSize = affectedUnitSet.size;
+
+    // Collect symbol IDs belonging to currently affected units
+    const affectedSymbolIds = new Set<string>();
+    for (const sym of facts.symbols) {
+      if (affectedUnitSet.has(sym.unit_id)) {
+        affectedSymbolIds.add(sym.id);
       }
     }
-  }
 
-  // 4. Expand via call_edges: callers of affected symbols are also affected
-  for (const edge of facts.call_edges) {
-    if (affectedSymbolIds.has(edge.callee_id)) {
-      const callerUnit = symbolToUnit.get(edge.caller_id);
-      if (callerUnit && !affectedUnitSet.has(callerUnit)) {
-        affectedUnitSet.add(callerUnit);
+    // Expand via type_relations: if a type in an affected unit
+    // is related (implements/embeds/etc) to another type, that unit is also affected
+    for (const rel of facts.type_relations) {
+      if (affectedSymbolIds.has(rel.to_type_id) || affectedSymbolIds.has(rel.from_type_id)) {
+        const fromUnit = symbolToUnit.get(rel.from_type_id);
+        const toUnit = symbolToUnit.get(rel.to_type_id);
+        if (fromUnit) affectedUnitSet.add(fromUnit);
+        if (toUnit) affectedUnitSet.add(toUnit);
+      }
+    }
+
+    // Expand via call_edges: callers of affected symbols are also affected
+    for (const edge of facts.call_edges) {
+      if (affectedSymbolIds.has(edge.callee_id)) {
+        const callerUnit = symbolToUnit.get(edge.caller_id);
+        if (callerUnit) affectedUnitSet.add(callerUnit);
       }
     }
   }
