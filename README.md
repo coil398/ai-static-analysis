@@ -22,7 +22,7 @@ LSP・コンパイラ・静的解析器などの決定論ツールを使い、�
 | **C#** | :white_check_mark: | :white_check_mark: | :white_check_mark: (csharp-ls) | :white_check_mark: (csharp-ls) | :white_check_mark: (csharp-ls) | :white_check_mark: | :white_check_mark: |
 | **Rust** | :white_check_mark: | :white_check_mark: | :white_check_mark: (rust-analyzer) | :white_check_mark: (rust-analyzer) | :white_check_mark: (rust-analyzer) | :white_check_mark: | :white_check_mark: |
 
-> \* Python の型関係は pyright が `textDocument/implementation` を未サポートのため、ソースコードのパターンマッチによる直接継承の検出のみ対応。
+> \* Python の型関係は pyright が `textDocument/implementation` を未サポートのため、Python 標準ライブラリの `ast` モジュールによるクラス継承の検出で対応（`adapters/python/extract_bases.py`）。
 
 > 各言語とも LSP サーバーが未インストールの場合は空配列に graceful degrade します。
 
