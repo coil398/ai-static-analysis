@@ -160,8 +160,9 @@ export async function updateFacts(
     );
     if (newUnits.length === 0) continue;
     try {
+      const langUnitIds = new Set(langUnits.map((u) => u.id));
       const langDeps = facts.deps.filter(
-        (d) => d.from_unit_id.startsWith(`unit:${lang}:`),
+        (d) => langUnitIds.has(d.from_unit_id),
       );
       const diags = await adapter.diagnose(newUnits, profile, langDeps);
       facts.diagnostics.push(...diags);

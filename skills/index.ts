@@ -1,8 +1,7 @@
 // index-facts skill — full indexing of a codebase
 
 import { join } from "node:path";
-import type { Facts, FactsDelta } from "../core/schema/types.ts";
-import type { Fingerprint } from "../core/schema/types.ts";
+import type { Facts, Unit, Fingerprint } from "../core/schema/types.ts";
 import {
   generateFingerprint,
   compareFingerprint,
@@ -97,21 +96,20 @@ export async function indexFacts(options: IndexOptions): Promise<IndexResult> {
     }
   }
 
-  // 4. Enumerate units for all active languages
+  // 4. Enumerate units for all active languages (track per-lang ownership)
   progress("[4/7] Enumerating units...");
-  const allUnits = (
-    await Promise.all(
-      activeLangs.map(async (lang) => {
-        const adapter = registry.getLanguageAdapter(lang)!;
-        try {
-          return await adapter.enumerateUnits(repoRoot, profile);
-        } catch (e) {
-          errors.push(`${lang}: enumerateUnits failed: ${e}`);
-          return [];
-        }
-      }),
-    )
-  ).flat();
+  const unitEntries = await Promise.all(
+    activeLangs.map(async (lang): Promise<[string, Unit[]]> => {
+      const adapter = registry.getLanguageAdapter(lang)!;
+      try {
+        return [lang, await adapter.enumerateUnits(repoRoot, profile)];
+      } catch (e) {
+        errors.push(`${lang}: enumerateUnits failed: ${e}`);
+        return [lang, [] as Unit[]];
+      }
+    }),
+  );
+  const unitsByLang = new Map(unitEntries);
 
   // 5. Index units — collect deltas and apply to empty facts
   progress("[5/7] Indexing units...");
@@ -131,12 +129,13 @@ export async function indexFacts(options: IndexOptions): Promise<IndexResult> {
     diagnostics: [],
   };
 
+  // Build a set of unit IDs per lang for diagnose phase
+  const unitIdsByLang = new Map<string, Set<string>>();
   for (const lang of activeLangs) {
-    const adapter = registry.getLanguageAdapter(lang)!;
-    const langUnits = allUnits.filter(
-      (u) => u.id.startsWith(`unit:${lang}:`),
-    );
+    const langUnits = unitsByLang.get(lang) ?? [];
+    unitIdsByLang.set(lang, new Set(langUnits.map((u) => u.id)));
     if (langUnits.length === 0) continue;
+    const adapter = registry.getLanguageAdapter(lang)!;
     try {
       const delta = await adapter.indexUnits(langUnits, profile);
       facts = applyDelta(facts, delta);
@@ -149,15 +148,12 @@ export async function indexFacts(options: IndexOptions): Promise<IndexResult> {
   progress("[6/7] Running diagnostics...");
   for (const lang of activeLangs) {
     const adapter = registry.getLanguageAdapter(lang)!;
-    const langUnits = facts.units.filter(
-      (u) => u.id.startsWith(`unit:${lang}:`),
-    );
+    const ids = unitIdsByLang.get(lang)!;
+    const langUnits = facts.units.filter((u) => ids.has(u.id));
     if (langUnits.length === 0) continue;
     try {
       // Pass already-computed deps to avoid redundant goList calls
-      const langDeps = facts.deps.filter(
-        (d) => d.from_unit_id.startsWith(`unit:${lang}:`),
-      );
+      const langDeps = facts.deps.filter((d) => ids.has(d.from_unit_id));
       const diags = await adapter.diagnose(langUnits, profile, langDeps);
       facts.diagnostics.push(...diags);
     } catch (e) {
