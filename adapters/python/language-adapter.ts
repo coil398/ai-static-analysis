@@ -384,9 +384,9 @@ export class PythonLanguageAdapter implements LanguageAdapter {
       }
     }
 
-    // 3. Collect type relations from class inheritance (source-based)
-    // pyright does not support textDocument/implementation, so we parse
-    // "class Foo(Bar):" patterns directly from source.
+    // 3. Collect type relations from class inheritance (source-based).
+    // Pyright does not support textDocument/implementation or prepareTypeHierarchy,
+    // so we parse class definitions from source to extract base classes.
     const inheritanceRelations = await this.detectClassInheritance(repoRoot, pyFiles, symbols);
     typeRelations.push(...inheritanceRelations);
 
@@ -529,9 +529,9 @@ export class PythonLanguageAdapter implements LanguageAdapter {
 
   /**
    * Detect class inheritance relations by parsing source files.
-   * pyright does not support textDocument/implementation, so we parse
-   * `class Foo(Bar, Baz):` patterns directly and map to TypeRelation.
-   * Only relations between known symbols (within our unit set) are emitted.
+   * Pyright does not support textDocument/implementation or prepareTypeHierarchy,
+   * so we parse class definitions from source and map base classes to known symbols.
+   * Handles multiline base lists, filters out metaclass= and Generic[...] arguments.
    */
   private async detectClassInheritance(
     repoRoot: string,
@@ -548,7 +548,9 @@ export class PythonLanguageAdapter implements LanguageAdapter {
       }
     }
 
-    const re = /^class\s+(\w+)\s*\(([^)]+)\)\s*:/gm;
+    // Match "class Name(...):". The base list may span multiple lines,
+    // so we first find "class Name(" then scan forward for the closing ")".
+    const classRe = /^class\s+(\w+)\s*\(/gm;
 
     for (const { relPath } of pyFiles) {
       let content: string;
@@ -558,23 +560,41 @@ export class PythonLanguageAdapter implements LanguageAdapter {
         continue;
       }
 
-      re.lastIndex = 0;
+      classRe.lastIndex = 0;
       let match;
-      while ((match = re.exec(content)) !== null) {
-        const [, className, basesStr] = match;
-        if (!className || !basesStr) continue;
+      while ((match = classRe.exec(content)) !== null) {
+        const className = match[1];
+        if (!className) continue;
 
         const classSymbol = classByName.get(className);
         if (!classSymbol) continue;
 
-        // Split base classes, handle dotted names by taking the last component
-        const bases = basesStr
-          .split(",")
-          .map((b) => b.trim().split(".").pop()!)
-          .filter(Boolean);
+        // Extract the full base list between ( and ), handling nesting
+        const parenStart = match.index + match[0].length;
+        let depth = 1;
+        let i = parenStart;
+        while (i < content.length && depth > 0) {
+          if (content[i] === "(") depth++;
+          else if (content[i] === ")") depth--;
+          i++;
+        }
+        if (depth !== 0) continue;
+        const basesStr = content.slice(parenStart, i - 1);
+
+        // Split on commas not inside brackets
+        const bases = this.splitBaseList(basesStr);
 
         for (const base of bases) {
-          const baseSymbol = classByName.get(base);
+          // Skip keyword arguments (metaclass=..., etc.)
+          if (base.includes("=")) continue;
+          // Skip Generic[...], Protocol[...], etc.
+          if (base.includes("[")) continue;
+
+          // Handle dotted names by taking the last component
+          const baseName = base.trim().split(".").pop()!;
+          if (!baseName) continue;
+
+          const baseSymbol = classByName.get(baseName);
           if (!baseSymbol) continue; // Skip stdlib / external bases
 
           relations.push({
@@ -587,6 +607,27 @@ export class PythonLanguageAdapter implements LanguageAdapter {
     }
 
     return relations;
+  }
+
+  /**
+   * Split a base class list string on top-level commas,
+   * respecting nested brackets (for Generic[T, U] etc.).
+   */
+  private splitBaseList(s: string): string[] {
+    const parts: string[] = [];
+    let depth = 0;
+    let start = 0;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (ch === "(" || ch === "[") depth++;
+      else if (ch === ")" || ch === "]") depth--;
+      else if (ch === "," && depth === 0) {
+        parts.push(s.slice(start, i));
+        start = i + 1;
+      }
+    }
+    parts.push(s.slice(start));
+    return parts.map((p) => p.trim()).filter(Boolean);
   }
 
   async diagnose(
