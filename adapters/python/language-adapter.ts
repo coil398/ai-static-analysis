@@ -384,9 +384,8 @@ export class PythonLanguageAdapter implements LanguageAdapter {
       }
     }
 
-    // 3. Collect type relations from class inheritance (source-based).
-    // Pyright does not support textDocument/implementation or prepareTypeHierarchy,
-    // so we parse class definitions from source to extract base classes.
+    // 3. Collect type relations from class inheritance via extract_bases.py (ast module).
+    // Pyright does not support textDocument/implementation or prepareTypeHierarchy.
     const inheritanceRelations = await this.detectClassInheritance(repoRoot, pyFiles, symbols);
     typeRelations.push(...inheritanceRelations);
 
@@ -528,10 +527,9 @@ export class PythonLanguageAdapter implements LanguageAdapter {
   }
 
   /**
-   * Detect class inheritance relations by parsing source files.
+   * Detect class inheritance relations by running extract_bases.py (Python ast module).
    * Pyright does not support textDocument/implementation or prepareTypeHierarchy,
-   * so we parse class definitions from source and map base classes to known symbols.
-   * Handles multiline base lists, filters out metaclass= and Generic[...] arguments.
+   * so we use Python's own parser for reliable class hierarchy extraction.
    */
   private async detectClassInheritance(
     repoRoot: string,
@@ -540,7 +538,6 @@ export class PythonLanguageAdapter implements LanguageAdapter {
   ): Promise<TypeRelation[]> {
     const relations: TypeRelation[] = [];
 
-    // Build class name → symbol map
     const classByName = new Map<string, Symbol>();
     for (const sym of symbols) {
       if (sym.kind === "class") {
@@ -548,86 +545,38 @@ export class PythonLanguageAdapter implements LanguageAdapter {
       }
     }
 
-    // Match "class Name(...):". The base list may span multiple lines,
-    // so we first find "class Name(" then scan forward for the closing ")".
-    const classRe = /^class\s+(\w+)\s*\(/gm;
+    const scriptPath = resolve(import.meta.dirname!, "extract_bases.py");
+    const absPaths = pyFiles.map(({ relPath }) => resolve(repoRoot, relPath));
+    if (absPaths.length === 0) return relations;
 
-    for (const { relPath } of pyFiles) {
-      let content: string;
+    const result = await exec(["python3", scriptPath, ...absPaths], { cwd: repoRoot });
+    if (result.exitCode !== 0) return relations;
+
+    for (const line of result.stdout.split("\n")) {
+      if (!line.trim()) continue;
+      let entry: { class: string; bases: string[] };
       try {
-        content = await Bun.file(resolve(repoRoot, relPath)).text();
+        entry = JSON.parse(line);
       } catch {
         continue;
       }
 
-      classRe.lastIndex = 0;
-      let match;
-      while ((match = classRe.exec(content)) !== null) {
-        const className = match[1];
-        if (!className) continue;
+      const classSymbol = classByName.get(entry.class);
+      if (!classSymbol) continue;
 
-        const classSymbol = classByName.get(className);
-        if (!classSymbol) continue;
+      for (const baseName of entry.bases) {
+        const baseSymbol = classByName.get(baseName);
+        if (!baseSymbol) continue;
 
-        // Extract the full base list between ( and ), handling nesting
-        const parenStart = match.index + match[0].length;
-        let depth = 1;
-        let i = parenStart;
-        while (i < content.length && depth > 0) {
-          if (content[i] === "(") depth++;
-          else if (content[i] === ")") depth--;
-          i++;
-        }
-        if (depth !== 0) continue;
-        const basesStr = content.slice(parenStart, i - 1);
-
-        // Split on commas not inside brackets
-        const bases = this.splitBaseList(basesStr);
-
-        for (const base of bases) {
-          // Skip keyword arguments (metaclass=..., etc.)
-          if (base.includes("=")) continue;
-          // Skip Generic[...], Protocol[...], etc.
-          if (base.includes("[")) continue;
-
-          // Handle dotted names by taking the last component
-          const baseName = base.trim().split(".").pop()!;
-          if (!baseName) continue;
-
-          const baseSymbol = classByName.get(baseName);
-          if (!baseSymbol) continue; // Skip stdlib / external bases
-
-          relations.push({
-            from_type_id: classSymbol.id,
-            to_type_id: baseSymbol.id,
-            kind: "implements",
-          });
-        }
+        relations.push({
+          from_type_id: classSymbol.id,
+          to_type_id: baseSymbol.id,
+          kind: "implements",
+        });
       }
     }
 
     return relations;
-  }
-
-  /**
-   * Split a base class list string on top-level commas,
-   * respecting nested brackets (for Generic[T, U] etc.).
-   */
-  private splitBaseList(s: string): string[] {
-    const parts: string[] = [];
-    let depth = 0;
-    let start = 0;
-    for (let i = 0; i < s.length; i++) {
-      const ch = s[i];
-      if (ch === "(" || ch === "[") depth++;
-      else if (ch === ")" || ch === "]") depth--;
-      else if (ch === "," && depth === 0) {
-        parts.push(s.slice(start, i));
-        start = i + 1;
-      }
-    }
-    parts.push(s.slice(start));
-    return parts.map((p) => p.trim()).filter(Boolean);
   }
 
   async diagnose(

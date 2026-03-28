@@ -20,7 +20,7 @@
 
 ### type_relations の取得方法
 
-Pyright は `textDocument/implementation` および `textDocument/prepareTypeHierarchy` を未サポートのため、type_relations はソース解析で取得する。`class Foo(Bar, Baz):` パターンをパースし、既知シンボル間の継承関係を `implements` として出力する。複数行の基底クラスリスト、`metaclass=` 引数、`Generic[T]` などのジェネリクス指定はフィルタする。
+Pyright は `textDocument/implementation` および `textDocument/prepareTypeHierarchy` を未サポートのため、type_relations は Python 標準ライブラリの `ast` モジュールで取得する。`adapters/python/extract_bases.py` がクラス定義の基底クラスを抽出し、JSONL で出力する。`metaclass=` 等のキーワード引数は `ast.ClassDef.bases` に含まれないため自動的に除外される。`Generic[T]` 等の Subscript は基底名に正規化される。
 
 ---
 
