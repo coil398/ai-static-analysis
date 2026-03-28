@@ -384,9 +384,8 @@ export class PythonLanguageAdapter implements LanguageAdapter {
       }
     }
 
-    // 3. Collect type relations from class inheritance (source-based)
-    // pyright does not support textDocument/implementation, so we parse
-    // "class Foo(Bar):" patterns directly from source.
+    // 3. Collect type relations from class inheritance via extract_bases.py (ast module).
+    // Pyright does not support textDocument/implementation or prepareTypeHierarchy.
     const inheritanceRelations = await this.detectClassInheritance(repoRoot, pyFiles, symbols);
     typeRelations.push(...inheritanceRelations);
 
@@ -528,10 +527,9 @@ export class PythonLanguageAdapter implements LanguageAdapter {
   }
 
   /**
-   * Detect class inheritance relations by parsing source files.
-   * pyright does not support textDocument/implementation, so we parse
-   * `class Foo(Bar, Baz):` patterns directly and map to TypeRelation.
-   * Only relations between known symbols (within our unit set) are emitted.
+   * Detect class inheritance relations by running extract_bases.py (Python ast module).
+   * Pyright does not support textDocument/implementation or prepareTypeHierarchy,
+   * so we use Python's own parser for reliable class hierarchy extraction.
    */
   private async detectClassInheritance(
     repoRoot: string,
@@ -540,7 +538,6 @@ export class PythonLanguageAdapter implements LanguageAdapter {
   ): Promise<TypeRelation[]> {
     const relations: TypeRelation[] = [];
 
-    // Build class name → symbol map
     const classByName = new Map<string, Symbol>();
     for (const sym of symbols) {
       if (sym.kind === "class") {
@@ -548,41 +545,34 @@ export class PythonLanguageAdapter implements LanguageAdapter {
       }
     }
 
-    const re = /^class\s+(\w+)\s*\(([^)]+)\)\s*:/gm;
+    const scriptPath = resolve(import.meta.dirname!, "extract_bases.py");
+    const absPaths = pyFiles.map(({ relPath }) => resolve(repoRoot, relPath));
+    if (absPaths.length === 0) return relations;
 
-    for (const { relPath } of pyFiles) {
-      let content: string;
+    const result = await exec(["python3", scriptPath, ...absPaths], { cwd: repoRoot });
+    if (result.exitCode !== 0) return relations;
+
+    for (const line of result.stdout.split("\n")) {
+      if (!line.trim()) continue;
+      let entry: { class: string; bases: string[] };
       try {
-        content = await Bun.file(resolve(repoRoot, relPath)).text();
+        entry = JSON.parse(line);
       } catch {
         continue;
       }
 
-      re.lastIndex = 0;
-      let match;
-      while ((match = re.exec(content)) !== null) {
-        const [, className, basesStr] = match;
-        if (!className || !basesStr) continue;
+      const classSymbol = classByName.get(entry.class);
+      if (!classSymbol) continue;
 
-        const classSymbol = classByName.get(className);
-        if (!classSymbol) continue;
+      for (const baseName of entry.bases) {
+        const baseSymbol = classByName.get(baseName);
+        if (!baseSymbol) continue;
 
-        // Split base classes, handle dotted names by taking the last component
-        const bases = basesStr
-          .split(",")
-          .map((b) => b.trim().split(".").pop()!)
-          .filter(Boolean);
-
-        for (const base of bases) {
-          const baseSymbol = classByName.get(base);
-          if (!baseSymbol) continue; // Skip stdlib / external bases
-
-          relations.push({
-            from_type_id: classSymbol.id,
-            to_type_id: baseSymbol.id,
-            kind: "implements",
-          });
-        }
+        relations.push({
+          from_type_id: classSymbol.id,
+          to_type_id: baseSymbol.id,
+          kind: "implements",
+        });
       }
     }
 
