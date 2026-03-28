@@ -17,12 +17,14 @@ LSP・コンパイラ・静的解析器などの決定論ツールを使い、�
 | 言語 | unit 列挙 | 依存解析 | シンボル定義 | 参照・呼出 | 型関係 | diagnostics | format/check/test |
 |---|---|---|---|---|---|---|---|
 | **Go** | :white_check_mark: | :white_check_mark: | :white_check_mark: (gopls) | :white_check_mark: (gopls) | :white_check_mark: (gopls) | :white_check_mark: (staticcheck等) | :white_check_mark: |
-| **TypeScript** | :white_check_mark: | :white_check_mark: | - | - | - | :white_check_mark: (tsc) | :white_check_mark: |
-| **Python** | :white_check_mark: | :white_check_mark: | - | - | - | :white_check_mark: | :white_check_mark: |
-| **C#** | :white_check_mark: | :white_check_mark: | - | - | - | :white_check_mark: | :white_check_mark: |
-| **Rust** | :white_check_mark: | :white_check_mark: | - | - | - | :white_check_mark: | :white_check_mark: |
+| **TypeScript** | :white_check_mark: | :white_check_mark: | :white_check_mark: (typescript-language-server) | :white_check_mark: (typescript-language-server) | :white_check_mark: (typescript-language-server) | :white_check_mark: (tsc) | :white_check_mark: |
+| **Python** | :white_check_mark: | :white_check_mark: | :white_check_mark: (pyright) | :white_check_mark: (pyright) | :white_check_mark:* | :white_check_mark: | :white_check_mark: |
+| **C#** | :white_check_mark: | :white_check_mark: | :white_check_mark: (csharp-ls) | :white_check_mark: (csharp-ls) | :white_check_mark: (csharp-ls) | :white_check_mark: | :white_check_mark: |
+| **Rust** | :white_check_mark: | :white_check_mark: | :white_check_mark: (rust-analyzer) | :white_check_mark: (rust-analyzer) | :white_check_mark: (rust-analyzer) | :white_check_mark: | :white_check_mark: |
 
-> Go 以外の言語は LSP 統合が未実装のため、シンボル定義・参照・呼出・型関係は空になります。依存関係・diagnostics・impact（unit レベル）は全言語で利用可能です。
+> \* Python の型関係は pyright が `textDocument/implementation` を未サポートのため、ソースコードのパターンマッチによる直接継承の検出のみ対応。
+
+> 各言語とも LSP サーバーが未インストールの場合は空配列に graceful degrade します。
 
 ## セットアップ
 

@@ -101,12 +101,13 @@ facts を使うクエリの前に、以下を確認する:
 | 言語 | unit 列挙 | 依存解析 | シンボル定義 | 参照・呼出 | 型関係 | diagnostics | format/check/test |
 |---|---|---|---|---|---|---|---|
 | **Go** | ✅ | ✅ | ✅ (gopls) | ✅ (gopls) | ✅ (gopls) | ✅ (staticcheck等) | ✅ |
-| **TypeScript** | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ (tsc) | ✅ |
-| **Python** | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| **C#** | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| **Rust** | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| **TypeScript** | ✅ | ✅ | ✅ (typescript-language-server) | ✅ (typescript-language-server) | ✅ (typescript-language-server) | ✅ (tsc) | ✅ |
+| **Python** | ✅ | ✅ | ✅ (pyright) | ✅ (pyright) | ✅* | ✅ | ✅ |
+| **C#** | ✅ | ✅ | ✅ (csharp-ls) | ✅ (csharp-ls) | ✅ (csharp-ls) | ✅ | ✅ |
+| **Rust** | ✅ | ✅ | ✅ (rust-analyzer) | ✅ (rust-analyzer) | ✅ (rust-analyzer) | ✅ | ✅ |
 
-> **注意**: Go 以外の言語では LSP 統合が未実装のため、`query-facts` の defs/refs/callers/callees/deadCode/impls はデータが空になる。deps/rdeps/diagnostics/impact（unit レベル）は全言語で利用可能。
+> \* Python の型関係は pyright が `textDocument/implementation` を未サポートのため、ソースコードのパターンマッチによる直接継承の検出のみ対応。
+> 各言語とも LSP サーバーが未インストールの場合は空配列に graceful degrade する。
 
 ## 前提
 
