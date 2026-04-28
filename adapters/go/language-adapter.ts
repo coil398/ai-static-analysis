@@ -19,6 +19,11 @@ import type {
   Diagnostic,
 } from "../../core/schema/types.ts";
 import { exec, whichTool, hashFile, isGenerated } from "./utils.ts";
+import { mapWithConcurrency } from "../shared/utils.ts";
+
+// gopls は単一プロセスだが LSP は並列リクエストを許容するので、
+// 大規模リポでも所要時間が肥大化しないよう各フェーズで並列度を上げる。
+const GOPLS_CONCURRENCY = 8;
 import { goList, type GoPackage } from "./go-list.ts";
 import {
   goplsSymbols,
@@ -242,8 +247,9 @@ export class GoLanguageAdapter implements LanguageAdapter {
         refs = result.refs;
         typeRelations = result.typeRelations;
         callEdges = result.callEdges;
-      } catch {
+      } catch (e) {
         // gopls crashed or exited — degrade gracefully with empty LSP results
+        console.error("[gopls index error]", e instanceof Error ? `${e.message}\n${e.stack}` : e);
       } finally {
         // 外部クライアントの場合は shutdown しない
         if (!useExternalClient) {
@@ -289,10 +295,34 @@ export class GoLanguageAdapter implements LanguageAdapter {
     const interfaceSymbols: Array<{ symbol: Symbol; relPath: string; line: number; col: number }> = [];
     const funcSymbols: Array<{ symbol: Symbol; relPath: string; line: number; col: number }> = [];
 
-    // 1. Collect symbols from all files
-    for (const { relPath, unitId } of goFiles) {
-      const goplsSyms = await goplsSymbols(relPath, repoRoot, client);
+    // 1. Collect symbols from all files (parallel fetch, sequential accumulate)
+    console.log(
+      `[gopls] phase 1: documentSymbols on ${goFiles.length} files (concurrency=${GOPLS_CONCURRENCY})`,
+    );
+    const t1 = Date.now();
+    const fileSyms = await mapWithConcurrency(
+      goFiles,
+      GOPLS_CONCURRENCY,
+      async ({ relPath, unitId }) => {
+        try {
+          return {
+            relPath,
+            unitId,
+            syms: await goplsSymbols(relPath, repoRoot, client),
+          };
+        } catch (e) {
+          console.warn(
+            `[gopls] documentSymbols failed for ${relPath}: ${e instanceof Error ? e.message : e}`,
+          );
+          return { relPath, unitId, syms: [] };
+        }
+      },
+    );
+    console.log(
+      `[gopls] phase 1 done in ${((Date.now() - t1) / 1000).toFixed(1)}s`,
+    );
 
+    for (const { relPath, unitId, syms: goplsSyms } of fileSyms) {
       for (const gSym of goplsSyms) {
         const sym = this.goplsSymbolToSymbol(gSym, relPath, unitId);
         symbols.push(sym);
@@ -329,9 +359,36 @@ export class GoLanguageAdapter implements LanguageAdapter {
       }
     }
 
-    // 2. Collect call edges from functions/methods
-    for (const { symbol, relPath, line, col } of funcSymbols) {
-      const hierarchy = await goplsCallHierarchy(relPath, line, col, repoRoot, client);
+    // 2. Collect call edges from functions/methods (parallel fetch, sequential accumulate)
+    console.log(
+      `[gopls] phase 2: callHierarchy on ${funcSymbols.length} functions (concurrency=${GOPLS_CONCURRENCY})`,
+    );
+    const t2 = Date.now();
+    const funcHierarchies = await mapWithConcurrency(
+      funcSymbols,
+      GOPLS_CONCURRENCY,
+      async ({ symbol, relPath, line, col }) => {
+        try {
+          return {
+            symbol,
+            relPath,
+            hierarchy: await goplsCallHierarchy(relPath, line, col, repoRoot, client),
+          };
+        } catch (e) {
+          // gopls は named function type 等で `is not a function` 等のエラーを返すことがある。
+          // 1 シンボルの失敗で全体破棄しないよう per-symbol で degrade する。
+          console.warn(
+            `[gopls] callHierarchy failed for ${symbol.id} (${relPath}:${line}:${col}): ${e instanceof Error ? e.message : e}`,
+          );
+          return { symbol, relPath, hierarchy: null };
+        }
+      },
+    );
+    console.log(
+      `[gopls] phase 2 done in ${((Date.now() - t2) / 1000).toFixed(1)}s`,
+    );
+
+    for (const { symbol, relPath, hierarchy } of funcHierarchies) {
       if (!hierarchy) continue;
 
       for (const callee of hierarchy.outgoing) {
@@ -400,14 +457,41 @@ export class GoLanguageAdapter implements LanguageAdapter {
       symbolByAbsPos.set(`${absPath}:${ln}:${cl}`, sym);
     }
 
-    for (const { symbol: targetSym, relPath: tRelPath, line: tLine, col: tCol } of refTargetSymbols) {
-      let refLocs: Awaited<ReturnType<typeof goplsReferences>>;
-      try {
-        refLocs = await goplsReferences(tRelPath, tLine, tCol, repoRoot, client);
-      } catch {
-        continue;
-      }
+    console.log(
+      `[gopls] phase 3: references on ${refTargetSymbols.length} targets (concurrency=${GOPLS_CONCURRENCY})`,
+    );
+    const t3 = Date.now();
+    const refLocsPerTarget = await mapWithConcurrency(
+      refTargetSymbols,
+      GOPLS_CONCURRENCY,
+      async ({ symbol, relPath, line, col }) => {
+        try {
+          return {
+            symbol,
+            relPath,
+            line,
+            col,
+            locs: await goplsReferences(relPath, line, col, repoRoot, client),
+          };
+        } catch (e) {
+          console.warn(
+            `[gopls] references failed for ${symbol.id} (${relPath}:${line}:${col}): ${e instanceof Error ? e.message : e}`,
+          );
+          return { symbol, relPath, line, col, locs: [] };
+        }
+      },
+    );
+    console.log(
+      `[gopls] phase 3 done in ${((Date.now() - t3) / 1000).toFixed(1)}s`,
+    );
 
+    for (const {
+      symbol: targetSym,
+      relPath: tRelPath,
+      line: tLine,
+      col: tCol,
+      locs: refLocs,
+    } of refLocsPerTarget) {
       for (const loc of refLocs) {
         // Skip the declaration itself
         const locRelPath = relative(repoRoot, loc.file);
@@ -442,11 +526,34 @@ export class GoLanguageAdapter implements LanguageAdapter {
       }
     }
 
-    // 3. Collect type relations (implementations)
-    for (const { symbol, relPath, line, col } of interfaceSymbols) {
-      if (symbol.kind !== "interface") continue;
+    // 3. Collect type relations (implementations) — parallel fetch, sequential accumulate
+    console.log(
+      `[gopls] phase 4: implementation on ${interfaceSymbols.length} interfaces (concurrency=${GOPLS_CONCURRENCY})`,
+    );
+    const t4 = Date.now();
+    const implsPerInterface = await mapWithConcurrency(
+      interfaceSymbols,
+      GOPLS_CONCURRENCY,
+      async ({ symbol, relPath, line, col }) => {
+        if (symbol.kind !== "interface") return { symbol, impls: [] };
+        try {
+          return {
+            symbol,
+            impls: await goplsImplementation(relPath, line, col, repoRoot, client),
+          };
+        } catch (e) {
+          console.warn(
+            `[gopls] implementation failed for ${symbol.id} (${relPath}:${line}:${col}): ${e instanceof Error ? e.message : e}`,
+          );
+          return { symbol, impls: [] };
+        }
+      },
+    );
+    console.log(
+      `[gopls] phase 4 done in ${((Date.now() - t4) / 1000).toFixed(1)}s`,
+    );
 
-      const impls = await goplsImplementation(relPath, line, col, repoRoot, client);
+    for (const { symbol, impls } of implsPerInterface) {
       for (const impl of impls) {
         const implRelPath = relative(repoRoot, impl.file);
         const implKey = `${implRelPath}:${impl.line}:${impl.col}`;
