@@ -9,6 +9,8 @@ export type {
   LspCallHierarchyItem,
   LspCallHierarchyOutgoingCall,
   LspCallHierarchyIncomingCall,
+  LspDiagnostic,
+  LspDocumentDiagnosticReport,
 } from "../shared/lsp-client.ts";
 
 export { LspClient } from "../shared/lsp-client.ts";

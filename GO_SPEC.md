@@ -190,6 +190,32 @@ callee[N]: ranges <line>:<col>-<endCol> in <file> from/to function <name> in <fi
 
 `GoplsLspClient` が `gopls serve` で LSP サーバーを1プロセス起動し、JSON-RPC (stdio) で全リクエストを処理する。`indexUnits` 1回につき1セッション（initialize → 全リクエスト → shutdown）。プロセス起動コストは1回のみ。
 
+### 10.5 diagnose: gopls 内蔵アナライザ (LSP pull-mode)
+
+`gopls` には CLI から取り出せない内蔵アナライザ（modernize/inline/rangeint/stringsbuilder 等）が同梱されている。これらは LSP の `textDocument/diagnostic` (pull-mode, LSP 3.17) または `textDocument/publishDiagnostics` (push-mode) でしかクライアントに届かないため、CLI 統合（staticcheck/errcheck/...）だけでは取り逃がす。
+
+実装は pull-mode を採用：
+
+- `LspClient.pullDiagnostics(relPath)` で `textDocument/diagnostic` を発行
+- 各ファイルを `didOpen` → pull → `didClose` の順で 1 リクエストずつ処理（gopls は didOpen 済みファイルにしか診断を返さない）
+- `mapWithConcurrency` で並列実行
+- `externalClient` が注入されていれば既存セッションを再利用、なければ `diagnose` 用に独立した `GoplsLspClient` を起動して終了時に shutdown
+
+各 LSP `Diagnostic` は `lspDiagnosticToInternal` で内部 `Diagnostic` 型に変換する：
+
+| LSP | 内部 |
+|---|---|
+| `severity: 1` | `severity: "error"` |
+| `severity: 2` | `severity: "warning"` |
+| `severity: 3` | `severity: "info"` |
+| `severity: 4` | `severity: "hint"` |
+| `source: "stringsbuilder"` | `tool: "gopls/stringsbuilder"`（無い場合は `tool: "gopls"`） |
+| `code: "default"` | message に追記しない |
+| `code: <それ以外>` | `message + " [<code>]"` |
+| `range.start.line` (0-based) | `position.line` (1-based) |
+
+graceful degrade: gopls が未インストールなら本フェーズはスキップ。pull-mode 非対応の gopls 古バージョン等で個別ファイルがエラーを返した場合は当該ファイルだけ空配列扱いにし、全体の `diagnose` 結果には影響させない。
+
 ## 11. 実装状態サマリ
 
 | 機能 | 状態 | ツール |
@@ -211,4 +237,5 @@ callee[N]: ranges <line>:<col>-<endCol> in <file> from/to function <name> in <fi
 | `diagnose` (gosec) | 実装済 | `gosec -fmt=json`（オプション、未インストール時degrade） |
 | `diagnose` (govulncheck) | 実装済 | `govulncheck -json`（オプション、未インストール時degrade） |
 | `diagnose` (dupl) | 実装済 | `dupl -plumbing -threshold 50`（オプション、未インストール時degrade） |
+| `diagnose` (gopls 内蔵アナライザ) | 実装済 | LSP `textDocument/diagnostic` (pull-mode, LSP 3.17)。`source` を `gopls/<analyzer>` に流し、modernize/inline/rangeint 等の hint も拾う |
 | ActionAdapter | 実装済 | `go fmt` / `go build` + `go vet` / `go test` |

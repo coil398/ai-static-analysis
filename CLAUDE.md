@@ -82,6 +82,7 @@ Claude Code はこのディレクトリの `SKILL.md` をエントリポイン�
 - gopls 連携: `GoplsLspClient` で `gopls serve` を1プロセス起動し JSON-RPC (stdio) で documentSymbol/callHierarchy/references/implementation を通信。gopls 未インストール時は空配列に degrade。
 - 参照解析: gopls `textDocument/references` で型参照(type_ref)・フィールドアクセス(field_access)・一般参照(reference)を収集。`findEnclosingSymbol` で参照元スコープを特定。
 - linter 統合: staticcheck(-f json)、errcheck(-abspath)、gosec(-fmt=json)、govulncheck(-json)、dupl(-plumbing) を `diagnose` に統合。全てオプション。
+- gopls 内蔵アナライザ統合: `LspClient.pullDiagnostics` で `textDocument/diagnostic` (LSP 3.17 pull-mode) を発行し、modernize/inline/rangeint/stringsbuilder 等の hint を `diagnose` に取り込む。tool 名は `gopls/<analyzer>` 形式（`source` 由来）。CLI 系統合では拾えない hint を補うのが目的。`externalClient` がある場合は再利用、無ければ独立した `GoplsLspClient` を起動して fin で shutdown。pull モードはファイル毎に `didOpen` → pull → `didClose` する必要あり（gopls は didOpen 済みファイルにしか診断を返さない）。
 - 循環依存検出: `detectCyclicDeps` で deps グラフを DFS し循環を検出（外部ツール不要）。
 
 ### ストレージ・クエリ最適化

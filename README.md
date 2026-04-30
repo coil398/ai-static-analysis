@@ -16,7 +16,7 @@ LSP・コンパイラ・静的解析器などの決定論ツールを使い、�
 
 | 言語 | unit 列挙 | 依存解析 | シンボル定義 | 参照・呼出 | 型関係 | diagnostics | format/check/test |
 |---|---|---|---|---|---|---|---|
-| **Go** | :white_check_mark: | :white_check_mark: | :white_check_mark: (gopls) | :white_check_mark: (gopls) | :white_check_mark: (gopls) | :white_check_mark: (staticcheck等) | :white_check_mark: |
+| **Go** | :white_check_mark: | :white_check_mark: | :white_check_mark: (gopls) | :white_check_mark: (gopls) | :white_check_mark: (gopls) | :white_check_mark: (gopls 内蔵アナライザ + staticcheck等) | :white_check_mark: |
 | **TypeScript** | :white_check_mark: | :white_check_mark: | :white_check_mark: (typescript-language-server) | :white_check_mark: (typescript-language-server) | :white_check_mark: (typescript-language-server) | :white_check_mark: (tsc) | :white_check_mark: |
 | **Python** | :white_check_mark: | :white_check_mark: | :white_check_mark: (pyright) | :white_check_mark: (pyright) | :white_check_mark:* | :white_check_mark: | :white_check_mark: |
 | **C#** | :white_check_mark: | :white_check_mark: | :white_check_mark: (csharp-ls) | :white_check_mark: (csharp-ls) | :white_check_mark: (csharp-ls) | :white_check_mark: | :white_check_mark: |
