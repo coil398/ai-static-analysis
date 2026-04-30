@@ -7,7 +7,9 @@ import {
   GoplsLspClient,
   type LspDocumentSymbol,
   type LspCallHierarchyItem,
+  type LspDiagnostic,
 } from "./lsp-client.ts";
+import type { Diagnostic } from "../../core/schema/types.ts";
 
 // --- Public types (unchanged from CLI version) ---
 
@@ -184,6 +186,68 @@ export async function goplsImplementation(
     col: loc.range.start.character + 1,
     endCol: loc.range.end.character + 1,
   }));
+}
+
+/**
+ * LSP DiagnosticSeverity → Diagnostic.severity (schema/types.ts).
+ * 1=Error, 2=Warning, 3=Information, 4=Hint. Default: warning.
+ */
+function lspSeverityToInternal(s: number | undefined): Diagnostic["severity"] {
+  switch (s) {
+    case 1: return "error";
+    case 2: return "warning";
+    case 3: return "info";
+    case 4: return "hint";
+    default: return "warning";
+  }
+}
+
+/** Convert a per-file gopls pull-mode diagnostic into the internal Diagnostic shape. */
+export function lspDiagnosticToInternal(
+  d: LspDiagnostic,
+  relPath: string,
+): Diagnostic {
+  // gopls reports the analyzer name in `source` (e.g. "stringsbuilder") and
+  // a sub-code in `code`. Surface both to keep the analyzer identifiable.
+  const analyzer = d.source ? `gopls/${d.source}` : "gopls";
+  const codeStr = d.code !== undefined && d.code !== "" && d.code !== "default"
+    ? ` [${d.code}]`
+    : "";
+  return {
+    file_id: `file:${relPath}`,
+    position: {
+      line: d.range.start.line + 1,
+      column: d.range.start.character + 1,
+    },
+    severity: lspSeverityToInternal(d.severity),
+    message: `${d.message}${codeStr}`,
+    tool: analyzer,
+  };
+}
+
+/**
+ * Pull diagnostics for a single file via LSP 3.17 `textDocument/diagnostic`.
+ * Returns an empty array if the server does not support pull-mode or if the
+ * request fails — callers should treat this as graceful degrade.
+ */
+export async function goplsDiagnostics(
+  relPath: string,
+  client: GoplsLspClient,
+): Promise<LspDiagnostic[]> {
+  try {
+    // gopls v0.15+ requires the file to be opened before it will produce diagnostics.
+    await client.openDocument(relPath, "go");
+    const report = await client.pullDiagnostics(relPath);
+    return report.items ?? [];
+  } catch {
+    return [];
+  } finally {
+    try {
+      await client.closeDocument(relPath);
+    } catch {
+      // closeDocument failure is non-fatal
+    }
+  }
 }
 
 // --- CLI parser functions (kept for unit tests) ---

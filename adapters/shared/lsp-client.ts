@@ -47,6 +47,25 @@ export interface LspCallHierarchyIncomingCall {
   fromRanges: LspRange[];
 }
 
+/** LSP Diagnostic (subset of textDocument.publishDiagnostics / textDocument.diagnostic). */
+export interface LspDiagnostic {
+  range: LspRange;
+  /** 1=Error, 2=Warning, 3=Information, 4=Hint (LSP DiagnosticSeverity) */
+  severity?: number;
+  code?: string | number;
+  source?: string;
+  message: string;
+  codeDescription?: { href: string };
+}
+
+/** LSP DocumentDiagnosticReport (LSP 3.17 pull-mode). */
+export interface LspDocumentDiagnosticReport {
+  /** "full" — items present | "unchanged" — same as last result */
+  kind: "full" | "unchanged";
+  resultId?: string;
+  items?: LspDiagnostic[];
+}
+
 // Symbol kind codes (LSP spec)
 const SYMBOL_KIND_MAP: Record<number, string> = {
   2: "Module",
@@ -78,6 +97,11 @@ const DEFAULT_CAPABILITIES = {
     callHierarchy: {},
     implementation: {},
     references: {},
+    publishDiagnostics: {},
+    diagnostic: { dynamicRegistration: false, relatedDocumentSupport: false },
+  },
+  workspace: {
+    diagnostics: { refreshSupport: false },
   },
 };
 
@@ -329,6 +353,25 @@ export class LspClient {
       context: { includeDeclaration },
     });
     return (result as LspLocation[] | null) ?? [];
+  }
+
+  /**
+   * LSP 3.17 pull-mode diagnostics: textDocument/diagnostic.
+   * Returns the diagnostics report for a single file. Servers that do not support
+   * pull-mode will reject the request — callers should treat the failure as graceful
+   * degrade and fall back (e.g. to push-mode or other diagnostic sources).
+   */
+  async pullDiagnostics(
+    relPath: string,
+    timeoutMs?: number,
+  ): Promise<LspDocumentDiagnosticReport> {
+    await this.ensureStarted();
+    const result = await this.sendRequest(
+      "textDocument/diagnostic",
+      { textDocument: { uri: this.fileUri(relPath) } },
+      timeoutMs,
+    );
+    return (result as LspDocumentDiagnosticReport | null) ?? { kind: "full", items: [] };
   }
 
   /**
