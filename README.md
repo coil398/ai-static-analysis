@@ -21,11 +21,9 @@ LSP・コンパイラ・静的解析器などの決定論ツールを使い、�
 | **Python** | :white_check_mark: | :white_check_mark: | :white_check_mark: (pyright) | :white_check_mark: (pyright) | :white_check_mark:* | :white_check_mark: | :white_check_mark: |
 | **C#** | :white_check_mark: | :white_check_mark: | :white_check_mark: (csharp-ls) | :white_check_mark: (csharp-ls) | :white_check_mark: (csharp-ls) | :white_check_mark: | :white_check_mark: |
 | **Rust** | :white_check_mark: | :white_check_mark: | :white_check_mark: (rust-analyzer) | :white_check_mark: (rust-analyzer) | :white_check_mark: (rust-analyzer) | :white_check_mark: | :white_check_mark: |
-| **Java** | :white_check_mark: | :white_check_mark: | :white_check_mark: (パーサベース†) | :x: | :x: | :white_check_mark: (checkstyle) | :white_check_mark: (Gradle/Maven) |
+| **Java** | :white_check_mark: | :white_check_mark: | :white_check_mark: (jdtls) | :white_check_mark: (jdtls) | :white_check_mark: (jdtls) | :white_check_mark: (checkstyle) | :white_check_mark: (Gradle/Maven) |
 
 > \* Python の型関係は pyright が `textDocument/implementation` を未サポートのため、Python 標準ライブラリの `ast` モジュールによるクラス継承の検出で対応（`adapters/python/extract_bases.py`）。
->
-> † Java はトップレベルの `class`/`interface`/`enum`/`record` のみ抽出。`refs`/`call_edges`/`type_relations` は jdtls 統合まで未対応。
 
 > 各言語とも LSP サーバーが未インストールの場合は空配列に graceful degrade します。
 

@@ -5,13 +5,15 @@
 //   - enumerateUnits: each Maven module / Gradle subproject becomes one unit
 //     (unit:java:<relPath>). For a single-project layout the root itself is the unit.
 //   - indexUnits: collect .java files, parse `import` statements, resolve them to
-//     known units by matching against each unit's package-root prefix. Symbol /
-//     ref / call_edge extraction is best-effort and depends on jdtls (Eclipse JDT
-//     LSP). When jdtls is not installed the adapter degrades to file + deps only.
+//     known units by matching against each unit's package-root prefix. When jdtls
+//     (Eclipse JDT LSP) is on PATH we drive it for full symbols / refs /
+//     call_edges / type_relations; otherwise we degrade to the parser-based
+//     top-level type extraction plus files + deps.
 //   - diagnose: optionally run checkstyle / spotbugs / pmd if installed.
 
 import { basename, relative, resolve } from "node:path";
-import { readdir, stat } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import type {
   LanguageAdapter,
   DetectResult,
@@ -23,6 +25,9 @@ import type {
   File,
   Dep,
   Symbol,
+  Ref,
+  TypeRelation,
+  CallEdge,
   FactsDelta,
   Diagnostic,
 } from "../../core/schema/types.ts";
@@ -34,6 +39,8 @@ import {
   hashSig,
   collectFiles,
   detectCyclicDeps,
+  LspClient,
+  type LspDocumentSymbol,
 } from "../shared/index.ts";
 
 interface ModuleInfo {
@@ -49,8 +56,29 @@ interface ModuleInfo {
   packagePrefixes: string[];
 }
 
+/** LSP DocumentSymbol kind → internal kind name. Matches the Java enum surface. */
+const JAVA_SYMBOL_KIND_MAP: Record<number, string> = {
+  5: "class",
+  10: "enum",
+  11: "interface",
+  6: "method",
+  9: "constructor",
+  8: "field",
+  14: "constant",
+  13: "variable",
+  22: "record",
+  23: "record",
+};
+
 export class JavaLanguageAdapter implements LanguageAdapter {
   readonly lang = "java";
+
+  private externalClient: LspClient | null = null;
+
+  /** Reuse an externally-managed jdtls client (test injection / batch runs). */
+  setExternalLspClient(client: LspClient | null): void {
+    this.externalClient = client;
+  }
 
   async detect(repoRoot: string): Promise<DetectResult> {
     const highConfidenceMarkers = [
@@ -164,8 +192,12 @@ export class JavaLanguageAdapter implements LanguageAdapter {
 
     const files: File[] = [];
     const deps: Dep[] = [];
-    const symbols: Symbol[] = [];
+    let symbols: Symbol[] = [];
+    let refs: Ref[] = [];
+    let typeRelations: TypeRelation[] = [];
+    let callEdges: CallEdge[] = [];
     const seenDep = new Set<string>();
+    const javaFiles: Array<{ relPath: string; unitId: string }> = [];
 
     for (const unit of units) {
       const unitDir = resolve(repoRoot, unit.path);
@@ -187,10 +219,11 @@ export class JavaLanguageAdapter implements LanguageAdapter {
 
         if (generated) continue;
 
+        javaFiles.push({ relPath, unitId: unit.id });
+
         const text = await safeRead(absPath);
         if (text === null) continue;
 
-        // Imports → deps.
         for (const imported of parseImports(text)) {
           for (const { prefix, unitId } of prefixToUnitId) {
             if (imported === prefix || imported.startsWith(prefix + ".")) {
@@ -208,11 +241,23 @@ export class JavaLanguageAdapter implements LanguageAdapter {
             }
           }
         }
+      }
+    }
 
-        // Top-level declarations → symbols. We only emit `class`/`interface`/
-        // `enum`/`record` declarations: methods/fields require an actual
-        // parser (jdtls integration) and would otherwise be noisy.
-        symbols.push(...parseTopLevelSymbols(text, unit.id, relPath));
+    // LSP-backed symbol/ref/call_edge/type_relation extraction. Falls back to
+    // a parser-only top-level symbol scan when jdtls is unavailable so the
+    // adapter still produces something useful in degraded mode.
+    const lspResult = await this.indexWithJdtls(repoRoot, javaFiles, new Set(units.map((u) => u.id)));
+    if (lspResult.ran) {
+      symbols = lspResult.symbols;
+      refs = lspResult.refs;
+      typeRelations = lspResult.typeRelations;
+      callEdges = lspResult.callEdges;
+    } else {
+      for (const { relPath, unitId } of javaFiles) {
+        const text = await safeRead(resolve(repoRoot, relPath));
+        if (text === null) continue;
+        symbols.push(...parseTopLevelSymbols(text, unitId, relPath));
       }
     }
 
@@ -222,9 +267,73 @@ export class JavaLanguageAdapter implements LanguageAdapter {
         files,
         deps,
         symbols,
+        refs,
+        type_relations: typeRelations,
+        call_edges: callEdges,
       },
       removed: {},
     };
+  }
+
+  /**
+   * Drive jdtls (Eclipse JDT LSP) to produce LSP-backed facts for Java.
+   * Returns `{ ran: false }` when jdtls is unavailable so the caller can fall
+   * back to the parser-only path.
+   */
+  private async indexWithJdtls(
+    repoRoot: string,
+    javaFiles: Array<{ relPath: string; unitId: string }>,
+    unitIds: Set<string>,
+  ): Promise<{
+    ran: boolean;
+    symbols: Symbol[];
+    refs: Ref[];
+    typeRelations: TypeRelation[];
+    callEdges: CallEdge[];
+  }> {
+    const empty = { symbols: [], refs: [], typeRelations: [], callEdges: [] };
+    if (javaFiles.length === 0) return { ran: false, ...empty };
+
+    if (!this.externalClient && (await whichTool("jdtls")) === null) {
+      return { ran: false, ...empty };
+    }
+
+    let workspaceDir: string | null = null;
+    let ownClient = false;
+    let client: LspClient;
+    if (this.externalClient) {
+      client = this.externalClient;
+    } else {
+      workspaceDir = await mkdtemp(resolve(tmpdir(), "jdtls-ws-"));
+      client = new LspClient(
+        ["jdtls", "-data", workspaceDir],
+        repoRoot,
+        undefined,
+        undefined,
+        { handleServerRequests: true },
+      );
+      ownClient = true;
+    }
+
+    try {
+      return {
+        ran: true,
+        ...(await runJdtlsIndexing(repoRoot, javaFiles, unitIds, client)),
+      };
+    } catch {
+      return { ran: true, ...empty };
+    } finally {
+      if (ownClient) {
+        try {
+          await client.shutdown();
+        } catch {
+          /* ignore */
+        }
+      }
+      if (workspaceDir) {
+        await rm(workspaceDir, { recursive: true, force: true }).catch(() => undefined);
+      }
+    }
   }
 
   async diagnose(
@@ -422,6 +531,282 @@ export function parseTopLevelSymbols(
     });
   }
   return out;
+}
+
+/**
+ * Drive a (potentially shared) jdtls LSP session across the full set of
+ * .java files in a repo: open every file, wait for the workspace to be
+ * indexed, then run documentSymbol / prepareCallHierarchy+outgoingCalls /
+ * references / implementation passes.
+ *
+ * Mirrors the C# adapter's csharp-ls integration but with Java symbol-kind
+ * mapping and `sym:java:` id conventions. jdtls loads project metadata
+ * asynchronously, so we probe documentSymbols on a representative file until
+ * we get a non-empty response (capped at 90 s, same envelope as csharp-ls).
+ */
+async function runJdtlsIndexing(
+  repoRoot: string,
+  javaFiles: Array<{ relPath: string; unitId: string }>,
+  unitIds: Set<string>,
+  client: LspClient,
+): Promise<{
+  symbols: Symbol[];
+  refs: Ref[];
+  typeRelations: TypeRelation[];
+  callEdges: CallEdge[];
+}> {
+  const symbols: Symbol[] = [];
+  const refs: Ref[] = [];
+  const typeRelations: TypeRelation[] = [];
+  const callEdges: CallEdge[] = [];
+
+  // "relPath:line:col" → Symbol — used for resolving LSP locations back to
+  // an emitted Symbol.
+  const symbolByPos = new Map<string, Symbol>();
+  const interfaceSymbols: Array<{ symbol: Symbol; relPath: string; line: number; col: number }> = [];
+  const funcSymbols: Array<{ symbol: Symbol; relPath: string; line: number; col: number }> = [];
+  const refTargetSymbols: Array<{ symbol: Symbol; relPath: string; line: number; col: number }> = [];
+
+  // 0. Open every file. Failure on any single open shouldn't kill the run —
+  //    jdtls happily serves the rest.
+  for (const { relPath } of javaFiles) {
+    try {
+      await client.openDocument(relPath, "java");
+    } catch { /* ignore */ }
+  }
+
+  // Probe documentSymbols on the first file until we get a non-empty reply.
+  // jdtls indexes the workspace asynchronously and returns [] until it's done.
+  const probeFile = javaFiles[0]?.relPath;
+  if (probeFile) {
+    const PROBE_TIMEOUT_MS = 5_000;
+    const start = Date.now();
+    while (Date.now() - start < 90_000) {
+      try {
+        const probe = await client.documentSymbols(probeFile, PROBE_TIMEOUT_MS);
+        if (probe.length > 0) break;
+      } catch { /* not ready */ }
+      await new Promise((r) => setTimeout(r, 1_000));
+    }
+  }
+
+  // 1. Collect symbols from every file.
+  for (const { relPath, unitId } of javaFiles) {
+    let lspSyms: LspDocumentSymbol[];
+    try {
+      lspSyms = await client.documentSymbols(relPath);
+    } catch {
+      continue;
+    }
+    const flat = flattenDocumentSymbols(lspSyms);
+    for (const lspSym of flat) {
+      const kind = JAVA_SYMBOL_KIND_MAP[lspSym.kind];
+      if (!kind) continue;
+      const line = lspSym.selectionRange.start.line;
+      const col = lspSym.selectionRange.start.character;
+      const sym = lspSymbolToJavaSymbol(lspSym, kind, relPath, unitId);
+      symbols.push(sym);
+      symbolByPos.set(`${relPath}:${line}:${col}`, sym);
+
+      if (kind === "interface") {
+        interfaceSymbols.push({ symbol: sym, relPath, line, col });
+      }
+      if (kind === "method" || kind === "constructor") {
+        funcSymbols.push({ symbol: sym, relPath, line, col });
+      }
+      if (
+        kind === "class" ||
+        kind === "interface" ||
+        kind === "enum" ||
+        kind === "record" ||
+        kind === "field" ||
+        kind === "constant"
+      ) {
+        refTargetSymbols.push({ symbol: sym, relPath, line, col });
+      }
+    }
+  }
+
+  // 2. Call edges via prepareCallHierarchy + outgoingCalls.
+  for (const { symbol, relPath, line, col } of funcSymbols) {
+    let items;
+    try {
+      items = await client.prepareCallHierarchy(relPath, line, col);
+    } catch {
+      continue;
+    }
+    for (const item of items) {
+      let outgoing;
+      try {
+        outgoing = await client.outgoingCalls(item);
+      } catch {
+        continue;
+      }
+      for (const call of outgoing) {
+        const calleeRelPath = relative(repoRoot, LspClient.uriToPath(call.to.uri));
+        let calleeSym = symbolByPos.get(
+          `${calleeRelPath}:${call.to.selectionRange.start.line}:${call.to.selectionRange.start.character}`,
+        );
+        if (!calleeSym) {
+          calleeSym = symbolByPos.get(
+            `${calleeRelPath}:${call.to.range.start.line}:${call.to.range.start.character}`,
+          );
+        }
+        if (!calleeSym) continue;
+        if (!unitIds.has(calleeSym.unit_id)) continue;
+        const callerFileId = `file:${relPath}`;
+        for (const range of call.fromRanges) {
+          callEdges.push({
+            caller_id: symbol.id,
+            callee_id: calleeSym.id,
+            site: {
+              file_id: callerFileId,
+              position: { line: range.start.line + 1, column: range.start.character + 1 },
+            },
+            dispatch: "static",
+          });
+          refs.push({
+            from_symbol_id: symbol.id,
+            to_symbol_id: calleeSym.id,
+            site: {
+              file_id: callerFileId,
+              position: { line: range.start.line + 1, column: range.start.character + 1 },
+            },
+            kind: "call",
+            confidence: "certain",
+          });
+        }
+      }
+    }
+  }
+
+  // 3. Non-call refs (type_ref, field_access, reference).
+  const callRefKeys = new Set(
+    refs.map(
+      (r) => `${r.to_symbol_id}@${r.site.file_id}:${r.site.position.line}:${r.site.position.column}`,
+    ),
+  );
+  for (const { symbol: targetSym, relPath: tRelPath, line: tLine, col: tCol } of refTargetSymbols) {
+    let refLocs;
+    try {
+      refLocs = await client.references(tRelPath, tLine, tCol);
+    } catch {
+      continue;
+    }
+    for (const loc of refLocs) {
+      const locRelPath = relative(repoRoot, LspClient.uriToPath(loc.uri));
+      // The decl site itself is included in references — skip it.
+      if (
+        locRelPath === tRelPath &&
+        loc.range.start.line === tLine &&
+        loc.range.start.character === tCol
+      ) {
+        continue;
+      }
+      const fileId = `file:${locRelPath}`;
+      const locLine = loc.range.start.line + 1;
+      const locCol = loc.range.start.character + 1;
+      const refKey = `${targetSym.id}@${fileId}:${locLine}:${locCol}`;
+      if (callRefKeys.has(refKey)) continue;
+      const fromSymbol = findEnclosingSymbol(symbols, fileId, locLine);
+      const kind =
+        targetSym.kind === "class" || targetSym.kind === "interface" ||
+        targetSym.kind === "enum" || targetSym.kind === "record"
+          ? "type_ref"
+          : targetSym.kind === "field"
+            ? "field_access"
+            : "reference";
+      refs.push({
+        from_symbol_id: fromSymbol?.id ?? `file_scope:${locRelPath}`,
+        to_symbol_id: targetSym.id,
+        site: {
+          file_id: fileId,
+          position: { line: locLine, column: locCol },
+        },
+        kind,
+        confidence: "certain",
+      });
+    }
+  }
+
+  // 4. type_relations via textDocument/implementation on every interface.
+  for (const { symbol, relPath, line, col } of interfaceSymbols) {
+    let impls;
+    try {
+      impls = await client.implementation(relPath, line, col);
+    } catch {
+      continue;
+    }
+    for (const impl of impls) {
+      const implRelPath = relative(repoRoot, LspClient.uriToPath(impl.uri));
+      const implLine = impl.range.start.line;
+      const implCol = impl.range.start.character;
+      const implSym = symbolByPos.get(`${implRelPath}:${implLine}:${implCol}`);
+      if (!implSym) continue;
+      typeRelations.push({
+        from_type_id: implSym.id,
+        to_type_id: symbol.id,
+        kind: "implements",
+      });
+    }
+  }
+
+  return { symbols, refs, typeRelations, callEdges };
+}
+
+function flattenDocumentSymbols(syms: LspDocumentSymbol[]): LspDocumentSymbol[] {
+  const out: LspDocumentSymbol[] = [];
+  for (const s of syms) {
+    out.push(s);
+    if (s.children?.length) out.push(...flattenDocumentSymbols(s.children));
+  }
+  return out;
+}
+
+function lspSymbolToJavaSymbol(
+  lspSym: LspDocumentSymbol,
+  kind: string,
+  relPath: string,
+  unitId: string,
+): Symbol {
+  const line = lspSym.selectionRange.start.line;
+  const col = lspSym.selectionRange.start.character;
+  const sigHash = hashSig(`${lspSym.name}:${lspSym.kind}:${line}`);
+  const unitPath = unitId.replace(/^unit:java:/, "");
+  return {
+    id: `sym:java:${unitPath}#${kind}#${lspSym.name}#sig:${sigHash}`,
+    unit_id: unitId,
+    name: lspSym.name,
+    kind,
+    // jdtls documentSymbol does not expose access modifiers, so we cannot tell
+    // private/protected from public here. Conservatively treat everything as
+    // exported (mirrors the C# adapter).
+    exported: true,
+    decl: {
+      file_id: `file:${relPath}`,
+      position: { line: line + 1, column: col + 1 },
+    },
+  };
+}
+
+function findEnclosingSymbol(
+  symbols: Symbol[],
+  fileId: string,
+  line: number,
+): Symbol | null {
+  const candidates = symbols
+    .filter(
+      (s) =>
+        s.decl.file_id === fileId &&
+        (s.kind === "method" || s.kind === "constructor"),
+    )
+    .sort((a, b) => a.decl.position.line - b.decl.position.line);
+  for (let i = 0; i < candidates.length; i++) {
+    const sym = candidates[i]!;
+    const next = i + 1 < candidates.length ? candidates[i + 1]!.decl.position.line : Infinity;
+    if (sym.decl.position.line <= line && line < next) return sym;
+  }
+  return null;
 }
 
 async function safeRead(path: string): Promise<string | null> {

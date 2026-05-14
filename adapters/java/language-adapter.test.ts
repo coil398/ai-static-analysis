@@ -6,8 +6,15 @@ import {
   parseTopLevelSymbols,
   parseCheckstyleXml,
 } from "./index.ts";
+import { whichTool } from "../shared/index.ts";
 
 const TESTDATA = resolve(import.meta.dir, "testdata");
+const hasJdtls = (await whichTool("jdtls")) !== null;
+
+// jdtls boots a JVM and indexes the workspace before the first response is
+// available — well beyond bun:test's default 5 s timeout. Use 180 s for
+// every indexUnits-driven test so the LSP path has time to settle.
+const LSP_TIMEOUT_MS = 180_000;
 
 describe("JavaLanguageAdapter", () => {
   const adapter = new JavaLanguageAdapter();
@@ -45,53 +52,132 @@ describe("JavaLanguageAdapter", () => {
     ).toContain("com.example.lib");
   });
 
-  test("indexUnits emits files and import-based deps", async () => {
-    const units = await adapter.enumerateUnits(TESTDATA, {});
-    const delta = await adapter.indexUnits(units, {});
-    const fileIds = (delta.added.files ?? []).map((f) => f.id).sort();
-    expect(fileIds).toEqual([
-      "file:app/src/main/java/com/example/app/Main.java",
-      "file:lib/src/main/java/com/example/lib/Greeter.java",
-    ]);
-    expect(delta.added.deps).toContainEqual({
-      from_unit_id: "unit:java:app",
-      to_unit_id: "unit:java:lib",
-      kind: "import",
-    });
-    // The reverse edge must not exist.
-    expect(
-      delta.added.deps?.some(
-        (d) =>
-          d.from_unit_id === "unit:java:lib" && d.to_unit_id === "unit:java:app",
-      ),
-    ).toBe(false);
-  });
+  test(
+    "indexUnits emits files and import-based deps",
+    async () => {
+      const units = await adapter.enumerateUnits(TESTDATA, {});
+      const delta = await adapter.indexUnits(units, {});
+      const fileIds = (delta.added.files ?? []).map((f) => f.id).sort();
+      expect(fileIds).toEqual([
+        "file:app/src/main/java/com/example/app/Main.java",
+        "file:lib/src/main/java/com/example/lib/Greeter.java",
+      ]);
+      expect(delta.added.deps).toContainEqual({
+        from_unit_id: "unit:java:app",
+        to_unit_id: "unit:java:lib",
+        kind: "import",
+      });
+      // The reverse edge must not exist.
+      expect(
+        delta.added.deps?.some(
+          (d) =>
+            d.from_unit_id === "unit:java:lib" &&
+            d.to_unit_id === "unit:java:app",
+        ),
+      ).toBe(false);
+    },
+    LSP_TIMEOUT_MS,
+  );
 
-  test("indexUnits surfaces top-level class symbols", async () => {
-    const units = await adapter.enumerateUnits(TESTDATA, {});
-    const delta = await adapter.indexUnits(units, {});
-    const symbolNames = (delta.added.symbols ?? []).map((s) => s.name).sort();
-    expect(symbolNames).toEqual(["Greeter", "Main"]);
-    const main = delta.added.symbols!.find((s) => s.name === "Main")!;
-    expect(main.kind).toBe("class");
-    expect(main.exported).toBe(true);
-    expect(main.decl.position.line).toBeGreaterThan(0);
-  });
+  test(
+    "indexUnits surfaces top-level class symbols",
+    async () => {
+      const units = await adapter.enumerateUnits(TESTDATA, {});
+      const delta = await adapter.indexUnits(units, {});
+      // The LSP path emits methods/fields too; the parser-only fallback emits
+      // only top-level types. Either way, the two top-level classes must be
+      // present.
+      const symbolNames = (delta.added.symbols ?? []).map((s) => s.name);
+      expect(symbolNames).toContain("Greeter");
+      expect(symbolNames).toContain("Main");
+      const main = delta.added.symbols!.find(
+        (s) => s.name === "Main" && s.kind === "class",
+      )!;
+      expect(main.kind).toBe("class");
+      expect(main.exported).toBe(true);
+      expect(main.decl.position.line).toBeGreaterThan(0);
+    },
+    LSP_TIMEOUT_MS,
+  );
 
-  test("file hashes match sha256:<hex>", async () => {
-    const units = await adapter.enumerateUnits(TESTDATA, {});
-    const delta = await adapter.indexUnits(units, {});
-    for (const f of delta.added.files ?? []) {
-      expect(f.hash).toMatch(/^sha256:[a-f0-9]{64}$/);
-    }
-  });
+  test(
+    "file hashes match sha256:<hex>",
+    async () => {
+      const units = await adapter.enumerateUnits(TESTDATA, {});
+      const delta = await adapter.indexUnits(units, {});
+      for (const f of delta.added.files ?? []) {
+        expect(f.hash).toMatch(/^sha256:[a-f0-9]{64}$/);
+      }
+    },
+    LSP_TIMEOUT_MS,
+  );
 
-  test("diagnose tolerates the absence of optional tools", async () => {
-    const units = await adapter.enumerateUnits(TESTDATA, {});
-    const diags = await adapter.diagnose(units, {});
-    // testdata has no cycles, no checkstyle config — expect an empty list.
-    expect(diags).toEqual([]);
-  });
+  test(
+    "diagnose tolerates the absence of optional tools",
+    async () => {
+      const units = await adapter.enumerateUnits(TESTDATA, {});
+      const diags = await adapter.diagnose(units, {});
+      // testdata has no cycles, no checkstyle config — expect an empty list.
+      expect(diags).toEqual([]);
+    },
+    LSP_TIMEOUT_MS,
+  );
+
+  test.skipIf(!hasJdtls)(
+    "indexUnits (LSP) produces method symbols",
+    async () => {
+      const units = await adapter.enumerateUnits(TESTDATA, {});
+      const delta = await adapter.indexUnits(units, {});
+      const methodNames = (delta.added.symbols ?? [])
+        .filter((s) => s.kind === "method")
+        .map((s) => s.name);
+      // The Greeter.greet(String) method must be picked up.
+      expect(methodNames.some((n) => n.startsWith("greet"))).toBe(true);
+    },
+    LSP_TIMEOUT_MS,
+  );
+
+  test.skipIf(!hasJdtls)(
+    "indexUnits (LSP) produces call edges from Main.main to Greeter.greet",
+    async () => {
+      const units = await adapter.enumerateUnits(TESTDATA, {});
+      const delta = await adapter.indexUnits(units, {});
+      const callerNames = (delta.added.symbols ?? []).filter((s) =>
+        s.name.startsWith("main"),
+      );
+      const calleeNames = (delta.added.symbols ?? []).filter((s) =>
+        s.name.startsWith("greet"),
+      );
+      expect(callerNames.length).toBeGreaterThan(0);
+      expect(calleeNames.length).toBeGreaterThan(0);
+      const callerIds = new Set(callerNames.map((s) => s.id));
+      const calleeIds = new Set(calleeNames.map((s) => s.id));
+      const hit = (delta.added.call_edges ?? []).some(
+        (e) => callerIds.has(e.caller_id) && calleeIds.has(e.callee_id),
+      );
+      expect(hit).toBe(true);
+    },
+    LSP_TIMEOUT_MS,
+  );
+
+  test.skipIf(!hasJdtls)(
+    "indexUnits (LSP) produces references to the Greeter type",
+    async () => {
+      const units = await adapter.enumerateUnits(TESTDATA, {});
+      const delta = await adapter.indexUnits(units, {});
+      const greeterSym = (delta.added.symbols ?? []).find(
+        (s) => s.name === "Greeter" && s.kind === "class",
+      );
+      expect(greeterSym).toBeDefined();
+      const refsToGreeter = (delta.added.refs ?? []).filter(
+        (r) => r.to_symbol_id === greeterSym!.id,
+      );
+      // Main.java references Greeter via `import` + type usage + constructor
+      // call — at least one ref must be surfaced.
+      expect(refsToGreeter.length).toBeGreaterThan(0);
+    },
+    LSP_TIMEOUT_MS,
+  );
 });
 
 describe("parseImports", () => {

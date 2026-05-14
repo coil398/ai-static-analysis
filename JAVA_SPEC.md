@@ -19,9 +19,12 @@
 
 `doctor()` は `javac` の有無のみ MUST。LSP・ビルドツール・linter は未インストール時に該当機能を degrade。
 
-### 現状の制約
+### 実装状況
 
-現バージョンの Java アダプタはパーサベースで `symbols` を抽出する（トップレベルの `class` / `interface` / `enum` / `record` のみ）。`refs` / `call_edges` / `type_relations` は LSP 統合前のため**空配列**になる。jdtls との接続は将来追加予定（同じ `adapters/shared/lsp-client.ts` の `LspClient` を流用できる）。
+- **jdtls 統合済み** — symbols / refs / call_edges / type_relations を LSP 経由で抽出
+- jdtls 未インストール時はパーサベースのフォールバック（トップレベル型のみ）で graceful degrade
+- jdtls はワークスペースを非同期にロードするため、`indexUnits` は最初のファイルで `documentSymbol` を最大 90 秒ポーリングしてから本処理に進む（csharp-ls と同じ envelope）
+- `setExternalLspClient` で外部から jdtls クライアントを注入可能（テスト用・複数言語バッチ実行で再利用）
 
 ---
 
@@ -56,7 +59,7 @@ Unit {
 
 - Unit: `unit:java:<relative_dir>`（ルート単一の場合 `unit:java:.`）
 - File: `file:<relative_path>`（例: `file:app/src/main/java/com/example/app/Main.java`）
-- Symbol: `sym:java:<unit_path>#<kind>#<name>#sig:<hash>` — 現状 `kind` は `class` / `interface` / `enum` / `record` のみ
+- Symbol: `sym:java:<unit_path>#<kind>#<name>#sig:<hash>` — `kind` は `class`/`interface`/`enum`/`record`/`method`/`constructor`/`field`/`constant`/`variable`（jdtls の `SymbolKind` を Java の用語にマップ）
 
 ---
 
@@ -71,13 +74,30 @@ Unit {
 
 ## 5. シンボル抽出
 
-正規表現で「行頭の修飾子列 + `class|interface|enum|record` + 名前」を拾う。
+### jdtls 利用時（推奨）
 
+- `textDocument/documentSymbol` を再帰的に走査し、`JAVA_SYMBOL_KIND_MAP` で LSP `SymbolKind` を内部 kind にマップ（5→class, 10→enum, 11→interface, 6→method, 9→constructor, 8→field, 14→constant, 13→variable, 22/23→record）
+- ネストしたメソッド・フィールドも抽出
+- `exported` は jdtls の documentSymbol が access modifier を返さないため一律 `true`（C# アダプタと同じ方針）
+- 位置情報は `selectionRange.start` を 1-based に変換
+
+### フォールバック（jdtls 未インストール時）
+
+- 正規表現で「行頭の修飾子列 + `class|interface|enum|record` + 名前」を拾う
 - `private` / `protected` を含む宣言は `exported: false`
 - それ以外（`public` 含む、無修飾の package-private 含む）は `exported: true`
-- 位置情報は宣言キーワードの 1-based (line, column)
+- メソッド・フィールド・ローカル宣言は扱わない
 
-メソッド・フィールド・ローカル宣言は LSP 統合まで扱わない。
+### refs / call_edges / type_relations（jdtls 必須）
+
+| 出力 | LSP メソッド |
+|---|---|
+| `refs`（call） | `prepareCallHierarchy` + `outgoingCalls` の `fromRanges` |
+| `refs`（type_ref / field_access / reference） | `textDocument/references` を class/interface/enum/record/field/constant 毎に発行し、宣言サイト自身は除外 |
+| `call_edges` | `prepareCallHierarchy` + `outgoingCalls` |
+| `type_relations`（implements） | `textDocument/implementation` を interface 毎に発行 |
+
+`from_symbol_id` を埋める際は、参照位置を内包する最も近いメソッド/コンストラクタを `findEnclosingSymbol` で逆引きする。該当無しの場合は `file_scope:<relPath>` のセンチネルを使う。
 
 ---
 

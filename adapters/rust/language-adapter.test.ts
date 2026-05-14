@@ -40,13 +40,13 @@ describe("RustLanguageAdapter", () => {
     expect(result.ok).toBe(true);
     expect(result.missing_tools).not.toContain("rustc");
     expect(result.missing_tools).not.toContain("cargo");
-  });
+  }, 30_000);
 
   test.skipIf(!hasRustc)("doctor notes rust-analyzer presence", async () => {
     const result = await adapter.doctor();
     const allNotes = result.notes.join("\n");
     expect(allNotes).toContain("rust-analyzer");
-  });
+  }, 30_000);
 
   test.skipIf(!hasCargo)("enumerateUnits returns crates", async () => {
     const units = await adapter.enumerateUnits(TESTDATA, {});

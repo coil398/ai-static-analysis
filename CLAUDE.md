@@ -64,7 +64,7 @@ Claude Code はこのディレクトリの `SKILL.md` をエントリポイン�
 - MVP Step 5-6 完了（skills 層: index/update/query/actions + core/diff）
 - Step 7 完了（大規模対応: JSONL ストレージ、派生索引、クエリ最適化）
 - Step 8 完了（AI Insights: loadInsightContext、query*、analyze-insights.md、query-insights.md）
-- Java アダプタ追加: パーサベースで unit 列挙（Maven/Gradle）、deps（import → package_prefixes マッチ）、トップレベル型 symbol 抽出。`refs`/`call_edges`/`type_relations` は jdtls 統合待ちで空配列。Action は Gradle/Maven にフォールバック。`JAVA_SPEC.md` 参照。
+- Java アダプタ追加: unit 列挙（Maven/Gradle）、deps（import → package_prefixes マッチ）、jdtls 経由で symbols / refs / call_edges / type_relations を抽出。jdtls 未導入時は parser ベースで top-level 型のみの degrade。Action は Gradle/Maven。`JAVA_SPEC.md` 参照。
 - SARIF v2.1.0 エクスポート: `core/sarif/diagnosticsToSarif` で `Diagnostic[]` → SARIF Log を生成。tool ごとに run を分け、ruleId は `[code]` トークンから導出（無ければ tool 名）。GitHub code scanning と直接連携可能。
 - compare-facts スキル: 2 つの cacheDir を比較し、units/files/deps/symbols/diagnostics の +/- と（オプションで）影響範囲を返す。`skills/compare.ts`。
 - visualize-graph スキル: facts を Mermaid または DOT に変換。`kind: "deps"` で unit 依存、`kind: "callgraph"` で関数間呼び出し。`include`/`match`/`maxEdges` でフィルタリング・トランケーション。`skills/visualize.ts`。

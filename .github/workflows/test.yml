@@ -47,6 +47,38 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Install jdtls (Eclipse JDT LSP)
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz" -o /tmp/jdtls.tar.gz
+          sudo mkdir -p /opt/jdtls
+          sudo tar -xzf /tmp/jdtls.tar.gz -C /opt/jdtls
+          sudo tee /usr/local/bin/jdtls > /dev/null <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          JDTLS_HOME="${JDTLS_HOME:-/opt/jdtls}"
+          LAUNCHER="$(ls "$JDTLS_HOME"/plugins/org.eclipse.equinox.launcher_*.jar 2>/dev/null | head -n 1)"
+          if [ -z "$LAUNCHER" ]; then
+            echo "jdtls: launcher jar not found under $JDTLS_HOME/plugins" >&2
+            exit 1
+          fi
+          CONFIG="${JDTLS_CONFIG:-$JDTLS_HOME/config_linux}"
+          exec java \
+            -Declipse.application=org.eclipse.jdt.ls.core.id1 \
+            -Dosgi.bundles.defaultStartLevel=4 \
+            -Declipse.product=org.eclipse.jdt.ls.core.product \
+            -Dlog.level=ERROR \
+            -Xmx2G \
+            --add-modules=ALL-SYSTEM \
+            --add-opens java.base/java.util=ALL-UNNAMED \
+            --add-opens java.base/java.lang=ALL-UNNAMED \
+            -jar "$LAUNCHER" \
+            -configuration "$CONFIG" \
+            "$@"
+          EOF
+          sudo chmod +x /usr/local/bin/jdtls
+          jdtls --help >/dev/null 2>&1 || true
+
       - name: Install dependencies
         run: bun install
 

@@ -98,12 +98,13 @@ const LSP_SUPPORTED_PREFIXES = [
   "unit:python:",
   "unit:csharp:",
   "unit:rust:",
+  "unit:java:",
 ];
 
 const LSP_WARNING =
   "LSP サーバーが未インストールか、対応言語以外のユニットのみです。" +
   "シンボルレベルのクエリ（defs/refs/callers/callees/deadCode/impls）の結果が不完全な可能性があります。" +
-  "LSP 統合対応言語: Go, TypeScript, Python, C#, Rust。deps/rdeps/diagnostics は全言語で利用可能です。";
+  "LSP 統合対応言語: Go, TypeScript, Python, C#, Rust, Java。deps/rdeps/diagnostics は全言語で利用可能です。";
 
 /**
  * Check if the facts contain units from LSP-supported languages.
