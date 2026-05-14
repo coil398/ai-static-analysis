@@ -8,7 +8,7 @@ LSP・コンパイラ・静的解析器などの決定論ツールを使い、�
 
 - **Facts ベースの解析** — LSP/コンパイラ/linter の出力を構造化データ（facts）として保存・クエリ
 - **差分更新** — 変更ファイルだけを再解析するインクリメンタル更新で大規模コードベースに対応
-- **多言語対応** — Go, TypeScript, Python, C#, Rust をサポート
+- **多言語対応** — Go, TypeScript, Python, C#, Rust, Java をサポート
 - **Fingerprint による整合性管理** — ツールバージョン・ビルド条件・コード状態を記録し、不整合を検知
 - **AI 分析（Insights）** — facts を元にバグ臭・設計パターン・命名・重複等の AI 分析を実行
 
@@ -21,8 +21,11 @@ LSP・コンパイラ・静的解析器などの決定論ツールを使い、�
 | **Python** | :white_check_mark: | :white_check_mark: | :white_check_mark: (pyright) | :white_check_mark: (pyright) | :white_check_mark:* | :white_check_mark: | :white_check_mark: |
 | **C#** | :white_check_mark: | :white_check_mark: | :white_check_mark: (csharp-ls) | :white_check_mark: (csharp-ls) | :white_check_mark: (csharp-ls) | :white_check_mark: | :white_check_mark: |
 | **Rust** | :white_check_mark: | :white_check_mark: | :white_check_mark: (rust-analyzer) | :white_check_mark: (rust-analyzer) | :white_check_mark: (rust-analyzer) | :white_check_mark: | :white_check_mark: |
+| **Java** | :white_check_mark: | :white_check_mark: | :white_check_mark: (パーサベース†) | :x: | :x: | :white_check_mark: (checkstyle) | :white_check_mark: (Gradle/Maven) |
 
 > \* Python の型関係は pyright が `textDocument/implementation` を未サポートのため、Python 標準ライブラリの `ast` モジュールによるクラス継承の検出で対応（`adapters/python/extract_bases.py`）。
+>
+> † Java はトップレベルの `class`/`interface`/`enum`/`record` のみ抽出。`refs`/`call_edges`/`type_relations` は jdtls 統合まで未対応。
 
 > 各言語とも LSP サーバーが未インストールの場合は空配列に graceful degrade します。
 
@@ -65,6 +68,10 @@ bun install
 | `run-actions` | format / check / test を言語別に実行 |
 | `analyze-insights` | facts とソースを読んで AI 分析を実行 |
 | `query-insights` | 生成済み insights をクエリ |
+| `compare-facts` | 2 つの facts スナップショットを diff（追加/削除された unit・file・symbol・diagnostic、影響範囲） |
+| `visualize-graph` | deps / call_edges を Mermaid または DOT グラフとして出力 |
+
+`query-facts` の出力は SARIF v2.1.0 にも変換できる（`core/sarif/diagnosticsToSarif`）。GitHub code scanning と直接連携可能。
 
 ### 基本的な流れ
 

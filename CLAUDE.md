@@ -47,11 +47,13 @@ Claude Code はこのディレクトリの `SKILL.md` をエントリポイン�
 | `setup` | 対象プロジェクトへの導入（CLAUDE.md テンプレ + SessionStart フック設定） |
 | `index-facts` | コードベース全体の静的解析を実行し、facts を生成 |
 | `update-facts` | 変更ファイルのみを再解析し、facts を差分更新 |
-| `query-facts` | facts に対してクエリを実行（deps/rdeps/defs/refs/diagnostics/impact） |
+| `query-facts` | facts に対してクエリを実行（deps/rdeps/defs/refs/diagnostics/impact）。SARIF エクスポート対応 |
 | `run-actions` | コードのフォーマット・チェック・テストを実行 |
 | `analyze-insights` | facts とソースを読んで AI 分析を実行し、insights を生成 |
 | `query-insights` | cache/insights.json から AI 分析結果をクエリ |
 | `bootstrap-tools` | 不足する解析ツールを自動インストール |
+| `compare-facts` | 2 スナップショット間で facts を diff（units/files/deps/symbols/diagnostics + 影響範囲） |
+| `visualize-graph` | deps / call_edges を Mermaid または DOT でレンダリング |
 
 ## 実装状態
 
@@ -62,6 +64,10 @@ Claude Code はこのディレクトリの `SKILL.md` をエントリポイン�
 - MVP Step 5-6 完了（skills 層: index/update/query/actions + core/diff）
 - Step 7 完了（大規模対応: JSONL ストレージ、派生索引、クエリ最適化）
 - Step 8 完了（AI Insights: loadInsightContext、query*、analyze-insights.md、query-insights.md）
+- Java アダプタ追加: パーサベースで unit 列挙（Maven/Gradle）、deps（import → package_prefixes マッチ）、トップレベル型 symbol 抽出。`refs`/`call_edges`/`type_relations` は jdtls 統合待ちで空配列。Action は Gradle/Maven にフォールバック。`JAVA_SPEC.md` 参照。
+- SARIF v2.1.0 エクスポート: `core/sarif/diagnosticsToSarif` で `Diagnostic[]` → SARIF Log を生成。tool ごとに run を分け、ruleId は `[code]` トークンから導出（無ければ tool 名）。GitHub code scanning と直接連携可能。
+- compare-facts スキル: 2 つの cacheDir を比較し、units/files/deps/symbols/diagnostics の +/- と（オプションで）影響範囲を返す。`skills/compare.ts`。
+- visualize-graph スキル: facts を Mermaid または DOT に変換。`kind: "deps"` で unit 依存、`kind: "callgraph"` で関数間呼び出し。`include`/`match`/`maxEdges` でフィルタリング・トランケーション。`skills/visualize.ts`。
 
 ## 開発メモ
 
