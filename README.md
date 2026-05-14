@@ -8,7 +8,7 @@ LSP・コンパイラ・静的解析器などの決定論ツールを使い、�
 
 - **Facts ベースの解析** — LSP/コンパイラ/linter の出力を構造化データ（facts）として保存・クエリ
 - **差分更新** — 変更ファイルだけを再解析するインクリメンタル更新で大規模コードベースに対応
-- **多言語対応** — Go, TypeScript, Python, C#, Rust, Java をサポート
+- **多言語対応** — Go, TypeScript, Python, C#, Rust, Java, C++, Haskell, Clojure, Elixir をサポート
 - **Fingerprint による整合性管理** — ツールバージョン・ビルド条件・コード状態を記録し、不整合を検知
 - **AI 分析（Insights）** — facts を元にバグ臭・設計パターン・命名・重複等の AI 分析を実行
 
@@ -22,8 +22,16 @@ LSP・コンパイラ・静的解析器などの決定論ツールを使い、�
 | **C#** | :white_check_mark: | :white_check_mark: | :white_check_mark: (csharp-ls) | :white_check_mark: (csharp-ls) | :white_check_mark: (csharp-ls) | :white_check_mark: | :white_check_mark: |
 | **Rust** | :white_check_mark: | :white_check_mark: | :white_check_mark: (rust-analyzer) | :white_check_mark: (rust-analyzer) | :white_check_mark: (rust-analyzer) | :white_check_mark: | :white_check_mark: |
 | **Java** | :white_check_mark: | :white_check_mark: | :white_check_mark: (jdtls) | :white_check_mark: (jdtls) | :white_check_mark: (jdtls) | :white_check_mark: (checkstyle) | :white_check_mark: (Gradle/Maven) |
+| **C++** | :white_check_mark: | :white_check_mark: (#include) | :white_check_mark: (clangd) | :white_check_mark: (clangd) | :white_check_mark: (clangd) | :white_check_mark: (cppcheck) | :white_check_mark: (CMake/Make) |
+| **Haskell** | :white_check_mark: (cabal) | :white_check_mark: (import + build-depends) | :white_check_mark: (HLS) | :white_check_mark: (HLS) | :white_check_mark: (HLS) | :white_check_mark: (hlint) | :white_check_mark: (cabal/stack) |
+| **Clojure** | :white_check_mark: (deps.edn/project.clj) | :white_check_mark: (require) | :white_check_mark: (clojure-lsp) | :white_check_mark: (clojure-lsp) | :x:‡ | :white_check_mark: (clj-kondo) | :white_check_mark: (clj/lein) |
+| **Elixir** | :white_check_mark: (mix.exs/umbrella) | :white_check_mark: (alias/import/use) | :white_check_mark: (elixir-ls) | :white_check_mark: (elixir-ls) | :x:§ | :white_check_mark: (credo) | :white_check_mark: (mix) |
 
 > \* Python の型関係は pyright が `textDocument/implementation` を未サポートのため、Python 標準ライブラリの `ast` モジュールによるクラス継承の検出で対応（`adapters/python/extract_bases.py`）。
+>
+> ‡ Clojure は class-based ではないため型関係は出力しない。
+>
+> § Elixir は dynamic で型階層がなく、type_relations は出力しない。protocols / behaviours の対応は将来検討。
 
 > 各言語とも LSP サーバーが未インストールの場合は空配列に graceful degrade します。
 

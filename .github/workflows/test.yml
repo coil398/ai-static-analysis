@@ -79,6 +79,58 @@ jobs:
           sudo chmod +x /usr/local/bin/jdtls
           jdtls --help >/dev/null 2>&1 || true
 
+      - name: Install C++ tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clangd-18 clang-format clang-tidy cppcheck cmake
+          sudo ln -sf /usr/bin/clangd-18 /usr/local/bin/clangd
+
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.6.4'
+          cabal-version: '3.10.3.0'
+          enable-stack: false
+
+      - name: Install HLS
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/haskell/haskell-language-server/releases/download/2.7.0.0/haskell-language-server-2.7.0.0-x86_64-linux-deb11.tar.xz" -o /tmp/hls.tar.xz
+          sudo mkdir -p /opt/hls
+          sudo tar -xJf /tmp/hls.tar.xz -C /opt/hls
+          sudo ln -sf /opt/hls/haskell-language-server-2.7.0.0/bin/haskell-language-server-wrapper /usr/local/bin/haskell-language-server-wrapper
+          sudo ln -sf /opt/hls/haskell-language-server-2.7.0.0/bin/haskell-language-server-9.6.4 /usr/local/bin/haskell-language-server
+          haskell-language-server-wrapper --version
+
+      - name: Install Clojure CLI and clojure-lsp
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/clj-install.sh "https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh"
+          sudo bash /tmp/clj-install.sh
+          curl -fsSL "https://github.com/clojure-lsp/clojure-lsp/releases/latest/download/clojure-lsp-native-static-linux-amd64.zip" -o /tmp/clojure-lsp.zip
+          cd /tmp && unzip -q -o clojure-lsp.zip
+          sudo mv /tmp/clojure-lsp /usr/local/bin/clojure-lsp
+          sudo chmod +x /usr/local/bin/clojure-lsp
+          clojure-lsp --version
+
+      - name: Install Elixir and elixir-ls
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends elixir
+          ELIXIR_LS_URL=$(curl -sL "https://api.github.com/repos/elixir-lsp/elixir-ls/releases/latest" | grep "browser_download_url.*zip" | head -1 | cut -d '"' -f 4)
+          curl -fsSL "$ELIXIR_LS_URL" -o /tmp/elixir-ls.zip
+          sudo mkdir -p /opt/elixir-ls
+          cd /opt/elixir-ls && sudo unzip -q -o /tmp/elixir-ls.zip
+          sudo chmod +x /opt/elixir-ls/language_server.sh
+          sudo ln -sf /opt/elixir-ls/language_server.sh /usr/local/bin/elixir-ls
+
+      - name: Pre-compile testdata so LSPs return useful results
+        run: |
+          set -euo pipefail
+          # Elixir: mix compile so elixir-ls' documentSymbol returns symbols
+          (cd adapters/elixir/testdata && mix deps.get && mix compile)
+          # C++: regenerate compile_commands.json
+          (cd adapters/cpp/testdata && cmake -B build -S . > /dev/null && cp build/compile_commands.json . && rm -rf build)
+
       - name: Install dependencies
         run: bun install
 

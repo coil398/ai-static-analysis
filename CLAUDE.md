@@ -65,6 +65,10 @@ Claude Code はこのディレクトリの `SKILL.md` をエントリポイン�
 - Step 7 完了（大規模対応: JSONL ストレージ、派生索引、クエリ最適化）
 - Step 8 完了（AI Insights: loadInsightContext、query*、analyze-insights.md、query-insights.md）
 - Java アダプタ追加: unit 列挙（Maven/Gradle）、deps（import → package_prefixes マッチ）、jdtls 経由で symbols / refs / call_edges / type_relations を抽出。jdtls 未導入時は parser ベースで top-level 型のみの degrade。Action は Gradle/Maven。`JAVA_SPEC.md` 参照。
+- C++ アダプタ追加: unit 列挙（top-level source dirs）、deps（`#include "..."` → loose header の owner マッチ）、clangd 経由で symbols / refs / call_edges / type_relations を抽出。`compile_commands.json` 推奨。Action は CMake / Make。診断は cppcheck。`CPP_SPEC.md` 参照。
+- Haskell アダプタ追加: unit 列挙（`.cabal` スタンザごとに library/executable/test-suite/benchmark）、deps（import + build-depends）、HLS 経由で symbols / refs / call_edges / type_relations を抽出。HLS は GHC バージョンと厳密に紐づくため `haskell-actions/setup` を CI で利用。`HASKELL_SPEC.md` 参照。
+- Clojure アダプタ追加: unit 列挙（deps.edn / project.clj / shadow-cljs.edn / bb.edn / build.boot）、deps（`(:require ...)` の namespace 解決）、clojure-lsp 経由で symbols / refs / call_edges。clj-kondo が出力する diagnostics を取り込む。type_relations は class-based ではないため空。`CLOJURE_SPEC.md` 参照。
+- Elixir アダプタ追加: unit 列挙（mix.exs 単発 or `apps/*` の umbrella）、deps（alias/import/use/require の module → unit マッピング）、elixir-ls 経由で symbols / refs / call_edges。LSP が空配列を返す場合はパーサベースの top-level `defmodule`/`def`/`defp` 抽出にフォールバック。診断は credo。`ELIXIR_SPEC.md` 参照。
 - SARIF v2.1.0 エクスポート: `core/sarif/diagnosticsToSarif` で `Diagnostic[]` → SARIF Log を生成。tool ごとに run を分け、ruleId は `[code]` トークンから導出（無ければ tool 名）。GitHub code scanning と直接連携可能。
 - compare-facts スキル: 2 つの cacheDir を比較し、units/files/deps/symbols/diagnostics の +/- と（オプションで）影響範囲を返す。`skills/compare.ts`。
 - visualize-graph スキル: facts を Mermaid または DOT に変換。`kind: "deps"` で unit 依存、`kind: "callgraph"` で関数間呼び出し。`include`/`match`/`maxEdges` でフィルタリング・トランケーション。`skills/visualize.ts`。
