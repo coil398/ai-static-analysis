@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { resolve } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   CppLanguageAdapter,
   parseIncludes,
@@ -20,9 +22,14 @@ describe("CppLanguageAdapter", () => {
     expect(r.confidence).toBe(1.0);
   });
 
-  test("detect returns unsupported for /tmp", async () => {
-    const r = await adapter.detect("/tmp");
-    expect(r.supported).toBe(false);
+  test("detect returns unsupported for an empty dir", async () => {
+    const empty = await mkdtemp(join(tmpdir(), "cpp-detect-"));
+    try {
+      const r = await adapter.detect(empty);
+      expect(r.supported).toBe(false);
+    } finally {
+      await rm(empty, { recursive: true, force: true });
+    }
   });
 
   test("doctor reports a missing compiler when absent", async () => {

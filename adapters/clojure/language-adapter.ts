@@ -239,13 +239,16 @@ export class ClojureLanguageAdapter implements LanguageAdapter {
       cljFiles.map(({ relPath, unitId }) => ({ relPath, unitId })),
       new Set(units.map((u) => u.id)),
     );
-    if (lsp.ran) {
+    // Prefer LSP when non-empty; otherwise parser fallback. clojure-lsp may
+    // return [] for documentSymbol before it has finished its first project
+    // scan even though our probe loop reported a non-empty result against
+    // the probe file.
+    if (lsp.ran && lsp.symbols.length > 0) {
       symbols = lsp.symbols;
       refs = lsp.refs;
       typeRelations = lsp.typeRelations;
       callEdges = lsp.callEdges;
     } else {
-      // Parser fallback: surface ns + defn declarations.
       for (const { relPath, unitId } of cljFiles) {
         const text = await safeRead(resolve(repoRoot, relPath));
         if (text === null) continue;

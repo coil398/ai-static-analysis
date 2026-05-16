@@ -244,11 +244,12 @@ export class JavaLanguageAdapter implements LanguageAdapter {
       }
     }
 
-    // LSP-backed symbol/ref/call_edge/type_relation extraction. Falls back to
-    // a parser-only top-level symbol scan when jdtls is unavailable so the
-    // adapter still produces something useful in degraded mode.
+    // LSP-backed symbol/ref/call_edge/type_relation extraction. Prefer LSP
+    // results when non-empty; otherwise fall back to a parser-only top-level
+    // scan so the adapter still produces useful symbols when jdtls is
+    // missing, mis-versioned, crashed, or simply not finished indexing.
     const lspResult = await this.indexWithJdtls(repoRoot, javaFiles, new Set(units.map((u) => u.id)));
-    if (lspResult.ran) {
+    if (lspResult.ran && lspResult.symbols.length > 0) {
       symbols = lspResult.symbols;
       refs = lspResult.refs;
       typeRelations = lspResult.typeRelations;
