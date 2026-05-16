@@ -1,0 +1,8 @@
+# jdtls pollutes the testdata tree with Eclipse / Gradle workspace metadata
+# every time the integration tests run. Keep them out of the repo.
+.gradle/
+.project
+.classpath
+.settings/
+bin/
+build/
