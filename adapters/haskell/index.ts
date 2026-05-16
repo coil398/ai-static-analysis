@@ -2,6 +2,7 @@ export {
   HaskellLanguageAdapter,
   parseCabalStanzas,
   parseImports,
+  parseTopLevelDefs,
   parseHlintJson,
   inferModuleName,
 } from "./language-adapter.ts";

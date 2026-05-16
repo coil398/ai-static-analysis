@@ -9,7 +9,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The full suite spawns gopls, jdtls, HLS, clojure-lsp, elixir-ls,
+    # clangd, pyright, csharp-ls, rust-analyzer and typescript-language-server
+    # in sequence. Each LSP boot can add a minute. 60 minutes gives the runs
+    # headroom even when caches are cold.
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4

@@ -280,11 +280,21 @@ export class HaskellLanguageAdapter implements LanguageAdapter {
       hsFiles.map(({ relPath, unitId }) => ({ relPath, unitId })),
       new Set(units.map((u) => u.id)),
     );
-    if (lsp.ran) {
+    // Prefer LSP when it returns non-empty; otherwise fall back to the
+    // parser. HLS may return [] when (a) it's not installed and our
+    // `whichTool` saw a stale symlink, (b) the project hasn't been built
+    // yet, or (c) the HLS GHC version doesn't match the project's GHC.
+    if (lsp.ran && lsp.symbols.length > 0) {
       symbols = lsp.symbols;
       refs = lsp.refs;
       typeRelations = lsp.typeRelations;
       callEdges = lsp.callEdges;
+    } else {
+      for (const { relPath, unitId } of hsFiles) {
+        const text = await safeRead(resolve(repoRoot, relPath));
+        if (text === null) continue;
+        symbols.push(...parseTopLevelDefs(text, unitId, relPath));
+      }
     }
 
     return {
@@ -503,6 +513,82 @@ export function parseImports(source: string): string[] {
   let m: RegExpExecArray | null;
   while ((m = IMPORT_RE.exec(source)) !== null) {
     out.push(m[1]!);
+  }
+  return out;
+}
+
+// Top-level declarations. Two anchored regexes to avoid runaway matches
+// across newlines (an earlier version used `[^=]*` which gobbled everything
+// up to the next `=` in the file):
+//   - HS_TYPE_SIG_RE matches `foo :: Type`
+//   - HS_FN_BINDING_RE matches `foo x y = body` (single line up to `=`)
+//   - HS_TYPE_DECL_RE matches `data|newtype|type|class Foo ...`
+const HS_TYPE_SIG_RE = /^([a-z_][\w']*)\s*::/gm;
+const HS_FN_BINDING_RE = /^([a-z_][\w']*)(?:[ \t]+[^\n=]*)?[ \t]*=(?!=)/gm;
+const HS_TYPE_DECL_RE = /^(data|newtype|type|class)[ \t]+([A-Z][\w']*)/gm;
+
+/**
+ * Fallback symbol scan when HLS is unavailable or returns nothing useful.
+ * Emits one Symbol per top-level binding / data / newtype / type / class.
+ * Multiple sightings of the same function (type signature + body) collapse
+ * to a single symbol by `(name, line)`.
+ */
+export function parseTopLevelDefs(
+  source: string,
+  unitId: string,
+  relPath: string,
+): Symbol[] {
+  const out: Symbol[] = [];
+  const seen = new Set<string>();
+  const unitPath = unitId.replace(/^unit:haskell:/, "");
+
+  function emit(name: string, kind: string, offset: number) {
+    let line = 1;
+    let lastNl = -1;
+    for (let i = 0; i < offset; i++) {
+      if (source.charCodeAt(i) === 10) {
+        line++;
+        lastNl = i;
+      }
+    }
+    const key = `${name}:${kind}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const column = offset - lastNl;
+    const sigHash = hashSig(`${name}:${kind}:${line}`);
+    out.push({
+      id: `sym:haskell:${unitPath}#${kind}#${name}#sig:${sigHash}`,
+      unit_id: unitId,
+      name,
+      kind,
+      // Without parsing the module header export list we can't tell what is
+      // exported — be conservative and mark everything as exported.
+      exported: true,
+      decl: {
+        file_id: `file:${relPath}`,
+        position: { line, column },
+      },
+    });
+  }
+
+  const skipKeywords = new Set(["module", "import", "where", "let", "in", "do"]);
+
+  for (const re of [HS_TYPE_SIG_RE, HS_FN_BINDING_RE]) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(source)) !== null) {
+      const name = m[1]!;
+      if (skipKeywords.has(name)) continue;
+      emit(name, "function", m.index);
+    }
+  }
+  HS_TYPE_DECL_RE.lastIndex = 0;
+  let mt: RegExpExecArray | null;
+  while ((mt = HS_TYPE_DECL_RE.exec(source)) !== null) {
+    const kw = mt[1]!;
+    const name = mt[2]!;
+    const kind = kw === "class" ? "class" : "type";
+    emit(name, kind, mt.index);
   }
   return out;
 }
