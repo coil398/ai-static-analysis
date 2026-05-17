@@ -3,7 +3,6 @@
 import { join } from "node:path";
 import type {
   Facts,
-  Unit,
   Dep,
   Symbol,
   Ref,
@@ -22,6 +21,8 @@ import {
 export interface QueryOptions {
   repoRoot: string;
   cacheDir?: string;
+  /** Maximum depth for transitive expansion in queryImpact (default: unlimited) */
+  maxDepth?: number;
 }
 
 // --- Result types ---
@@ -38,11 +39,13 @@ export interface RdepsResult {
 
 export interface DefsResult {
   symbols: Symbol[];
+  warnings?: string[];
 }
 
 export interface RefsResult {
   symbolId: string;
   refs: Ref[];
+  warnings?: string[];
 }
 
 export interface DiagnosticsResult {
@@ -58,16 +61,19 @@ export interface ImpactResult {
 export interface ImplsResult {
   typeId: string;
   implementations: TypeRelation[];
+  warnings?: string[];
 }
 
 export interface CallersResult {
   symbolId: string;
   callers: CallEdge[];
+  warnings?: string[];
 }
 
 export interface CalleesResult {
   symbolId: string;
   callees: CallEdge[];
+  warnings?: string[];
 }
 
 export interface DeadCodeResult {
@@ -76,12 +82,47 @@ export interface DeadCodeResult {
     symbol: Symbol;
     unitId: string;
   }>;
+  warnings?: string[];
 }
 
 // --- Internal helpers ---
 
 function resolveCacheDir(opts: QueryOptions): string {
   return opts.cacheDir ?? join(opts.repoRoot, "cache");
+}
+
+/** Unit ID prefixes for languages with LSP integration (symbol-level data available). */
+const LSP_SUPPORTED_PREFIXES = [
+  "unit:go:",
+  "unit:ts:",
+  "unit:python:",
+  "unit:csharp:",
+  "unit:rust:",
+  "unit:java:",
+  "unit:cpp:",
+  "unit:haskell:",
+  "unit:clojure:",
+  "unit:elixir:",
+];
+
+const LSP_WARNING =
+  "LSP サーバーが未インストールか、対応言語以外のユニットのみです。" +
+  "シンボルレベルのクエリ（defs/refs/callers/callees/deadCode/impls）の結果が不完全な可能性があります。" +
+  "LSP 統合対応言語: Go, TypeScript, Python, C#, Rust, Java, C++, Haskell, Clojure, Elixir。deps/rdeps/diagnostics は全言語で利用可能です。";
+
+/**
+ * Check if the facts contain units from LSP-supported languages.
+ * Returns a warning array if no LSP-supported units exist and symbols are empty.
+ */
+function checkSymbolLevelWarnings(facts: Facts): string[] | undefined {
+  if (facts.units.length === 0) return undefined;
+  const hasLspUnits = facts.units.some((u) =>
+    LSP_SUPPORTED_PREFIXES.some((prefix) => u.id.startsWith(prefix)),
+  );
+  if (!hasLspUnits && facts.symbols.length === 0) {
+    return [LSP_WARNING];
+  }
+  return undefined;
 }
 
 // In-process cache with incremental field loading.
@@ -203,12 +244,14 @@ export async function queryDefs(
       if (query.id && s.id !== query.id) return false;
       if (query.name && s.name !== query.name) return false;
       if (query.path) {
-        // Match against file path in declaration
+        // Match against file path in declaration.
+        // Accepts exact match, or path as a directory/file suffix after '/'.
         const file = facts.files.find((f) => f.id === s.decl.file_id);
+        if (!file) return false;
         if (
-          !file ||
-          (file.path !== query.path &&
-            !file.path.endsWith(`/${query.path}`))
+          file.path !== query.path &&
+          !file.path.startsWith(`${query.path}/`) &&
+          !file.path.endsWith(`/${query.path}`)
         )
           return false;
       }
@@ -216,7 +259,8 @@ export async function queryDefs(
     });
   }
 
-  return { symbols };
+  const warnings = symbols.length === 0 ? checkSymbolLevelWarnings(facts) : undefined;
+  return warnings ? { symbols, warnings } : { symbols };
 }
 
 export async function queryRefs(
@@ -230,9 +274,10 @@ export async function queryRefs(
     return { symbolId, refs };
   }
   // Fallback: load only refs
-  const facts = await loadFactsFields(opts, ["refs"]);
+  const facts = await loadFactsFields(opts, ["refs", "units", "symbols"]);
   const refs = facts.refs.filter((r) => r.to_symbol_id === symbolId);
-  return { symbolId, refs };
+  const warnings = refs.length === 0 ? checkSymbolLevelWarnings(facts) : undefined;
+  return warnings ? { symbolId, refs, warnings } : { symbolId, refs };
 }
 
 export async function queryDiagnostics(
@@ -274,9 +319,84 @@ export async function queryImpact(
   changedFiles: string[],
   opts: QueryOptions,
 ): Promise<ImpactResult> {
-  const facts = await loadFactsFields(opts, ["files", "deps"]);
-  const affectedUnits = impactUnits(changedFiles, facts);
-  const affectedUnitSet = new Set(affectedUnits);
+  const facts = await loadFactsFields(opts, [
+    "files", "deps", "symbols", "type_relations", "call_edges",
+  ]);
+
+  const maxDepth = opts.maxDepth;
+
+  // 1. Direct impact: units containing the changed files
+  const directUnits = impactUnits(changedFiles, facts);
+  const affectedUnitSet = new Set(directUnits);
+
+  // 2. Transitive expansion via deps (rdeps of affected units) with optional depth limit
+  //    Build reverse dependency map once for O(units + deps) traversal
+  const rdepMap = new Map<string, string[]>();
+  for (const dep of facts.deps) {
+    const existing = rdepMap.get(dep.to_unit_id);
+    if (existing) {
+      existing.push(dep.from_unit_id);
+    } else {
+      rdepMap.set(dep.to_unit_id, [dep.from_unit_id]);
+    }
+  }
+  const depsRdepQueue: Array<{ uid: string; depth: number }> = directUnits.map(
+    (uid) => ({ uid, depth: 0 }),
+  );
+  while (depsRdepQueue.length > 0) {
+    const { uid, depth } = depsRdepQueue.shift()!;
+    if (maxDepth !== undefined && depth >= maxDepth) continue;
+    const rdeps = rdepMap.get(uid);
+    if (!rdeps) continue;
+    for (const fromUid of rdeps) {
+      if (!affectedUnitSet.has(fromUid)) {
+        affectedUnitSet.add(fromUid);
+        depsRdepQueue.push({ uid: fromUid, depth: depth + 1 });
+      }
+    }
+  }
+
+  // 3. Build symbol-to-unit lookup for O(1) access
+  const symbolToUnit = new Map<string, string>();
+  for (const sym of facts.symbols) {
+    symbolToUnit.set(sym.id, sym.unit_id);
+  }
+
+  // 4. Transitive expansion via type_relations and call_edges (SPEC.md §9.2)
+  //    Repeatedly discover new affected units until no new units are found.
+  let prevSize = 0;
+  while (affectedUnitSet.size !== prevSize) {
+    prevSize = affectedUnitSet.size;
+
+    // Collect symbol IDs belonging to currently affected units
+    const affectedSymbolIds = new Set<string>();
+    for (const sym of facts.symbols) {
+      if (affectedUnitSet.has(sym.unit_id)) {
+        affectedSymbolIds.add(sym.id);
+      }
+    }
+
+    // Expand via type_relations: if a type in an affected unit
+    // is related (implements/embeds/etc) to another type, that unit is also affected
+    for (const rel of facts.type_relations) {
+      if (affectedSymbolIds.has(rel.to_type_id) || affectedSymbolIds.has(rel.from_type_id)) {
+        const fromUnit = symbolToUnit.get(rel.from_type_id);
+        const toUnit = symbolToUnit.get(rel.to_type_id);
+        if (fromUnit) affectedUnitSet.add(fromUnit);
+        if (toUnit) affectedUnitSet.add(toUnit);
+      }
+    }
+
+    // Expand via call_edges: callers of affected symbols are also affected
+    for (const edge of facts.call_edges) {
+      if (affectedSymbolIds.has(edge.callee_id)) {
+        const callerUnit = symbolToUnit.get(edge.caller_id);
+        if (callerUnit) affectedUnitSet.add(callerUnit);
+      }
+    }
+  }
+
+  const affectedUnits = [...affectedUnitSet];
 
   // Find deps that touch affected units
   const affectedDeps = facts.deps.filter(
@@ -292,29 +412,32 @@ export async function queryImpls(
   typeId: string,
   opts: QueryOptions,
 ): Promise<ImplsResult> {
-  const facts = await loadFactsFields(opts, ["type_relations"]);
+  const facts = await loadFactsFields(opts, ["type_relations", "units", "symbols"]);
   const implementations = facts.type_relations.filter(
     (r) => r.to_type_id === typeId && r.kind === "implements",
   );
-  return { typeId, implementations };
+  const warnings = implementations.length === 0 ? checkSymbolLevelWarnings(facts) : undefined;
+  return warnings ? { typeId, implementations, warnings } : { typeId, implementations };
 }
 
 export async function queryCallers(
   symbolId: string,
   opts: QueryOptions,
 ): Promise<CallersResult> {
-  const facts = await loadFactsFields(opts, ["call_edges"]);
+  const facts = await loadFactsFields(opts, ["call_edges", "units", "symbols"]);
   const callers = facts.call_edges.filter((e) => e.callee_id === symbolId);
-  return { symbolId, callers };
+  const warnings = callers.length === 0 ? checkSymbolLevelWarnings(facts) : undefined;
+  return warnings ? { symbolId, callers, warnings } : { symbolId, callers };
 }
 
 export async function queryCallees(
   symbolId: string,
   opts: QueryOptions,
 ): Promise<CalleesResult> {
-  const facts = await loadFactsFields(opts, ["call_edges"]);
+  const facts = await loadFactsFields(opts, ["call_edges", "units", "symbols"]);
   const callees = facts.call_edges.filter((e) => e.caller_id === symbolId);
-  return { symbolId, callees };
+  const warnings = callees.length === 0 ? checkSymbolLevelWarnings(facts) : undefined;
+  return warnings ? { symbolId, callees, warnings } : { symbolId, callees };
 }
 
 /**
@@ -345,15 +468,26 @@ export async function queryDeadCode(
       implementorIds.add(rel.from_type_id);
     }
   }
-  // Also exclude methods on implementing types (they exist to satisfy interfaces)
+  // Also exclude methods on implementing types (they exist to satisfy interfaces).
+  // Build a unit-scoped lookup: (unit_id, receiver_name) → symbol IDs of matching types,
+  // to handle the case where multiple types share a name across different units.
+  const typeByUnitAndName = new Map<string, string[]>();
+  for (const sym of facts.symbols) {
+    if (sym.kind === "struct" || sym.kind === "type") {
+      const key = `${sym.unit_id}::${sym.name}`;
+      const existing = typeByUnitAndName.get(key);
+      if (existing) {
+        existing.push(sym.id);
+      } else {
+        typeByUnitAndName.set(key, [sym.id]);
+      }
+    }
+  }
   for (const sym of facts.symbols) {
     if (sym.kind === "method" && sym.metadata?.receiver) {
-      // Check if the receiver type implements any interface
-      const receiverTypeId = facts.symbols.find(
-        (s) => s.name === sym.metadata!.receiver && s.unit_id === sym.unit_id &&
-               (s.kind === "struct" || s.kind === "type"),
-      )?.id;
-      if (receiverTypeId && implementorIds.has(receiverTypeId)) {
+      const key = `${sym.unit_id}::${sym.metadata.receiver}`;
+      const receiverTypeIds = typeByUnitAndName.get(key);
+      if (receiverTypeIds?.some((id) => implementorIds.has(id))) {
         implementorIds.add(sym.id);
       }
     }
@@ -383,5 +517,6 @@ export async function queryDeadCode(
     }
   }
 
-  return { deadSymbols };
+  const warnings = deadSymbols.length === 0 ? checkSymbolLevelWarnings(facts) : undefined;
+  return warnings ? { deadSymbols, warnings } : { deadSymbols };
 }

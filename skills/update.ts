@@ -15,7 +15,7 @@ import {
 import { applyDelta, impactUnits } from "../core/diff/index.ts";
 import { buildIndexes } from "../core/index/index.ts";
 import { createRegistry } from "./registry.ts";
-import { indexFacts, type IndexOptions } from "./index.ts";
+import { indexFacts } from "./index.ts";
 
 export interface UpdateOptions {
   repoRoot: string;
@@ -160,7 +160,11 @@ export async function updateFacts(
     );
     if (newUnits.length === 0) continue;
     try {
-      const diags = await adapter.diagnose(newUnits, profile);
+      const langUnitIds = new Set(langUnits.map((u) => u.id));
+      const langDeps = facts.deps.filter(
+        (d) => langUnitIds.has(d.from_unit_id),
+      );
+      const diags = await adapter.diagnose(newUnits, profile, langDeps);
       facts.diagnostics.push(...diags);
     } catch (e) {
       warnings.push(`${lang}: diagnose failed, restoring old diagnostics: ${e}`);
@@ -175,6 +179,9 @@ export async function updateFacts(
 
   // 10. Persist + rebuild indexes + update fingerprint
   await writeFactsJsonl(cacheDir, facts);
+  // Invalidate in-process query cache after write (dynamic import to avoid circular dependency)
+  const { clearFactsCache } = await import("./query.ts");
+  clearFactsCache();
   await writeFingerprint(cacheDir, fingerprint);
   await buildIndexes(cacheDir, facts);
 

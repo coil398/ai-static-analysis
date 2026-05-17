@@ -1,0 +1,14 @@
+[
+{
+  "directory": "/home/user/ai-static-analysis/adapters/cpp/testdata/build",
+  "command": "/usr/bin/c++  -I/home/user/ai-static-analysis/adapters/cpp/testdata/include -std=gnu++17 -o CMakeFiles/greet.dir/lib/greet.cpp.o -c /home/user/ai-static-analysis/adapters/cpp/testdata/lib/greet.cpp",
+  "file": "/home/user/ai-static-analysis/adapters/cpp/testdata/lib/greet.cpp",
+  "output": "CMakeFiles/greet.dir/lib/greet.cpp.o"
+},
+{
+  "directory": "/home/user/ai-static-analysis/adapters/cpp/testdata/build",
+  "command": "/usr/bin/c++  -I/home/user/ai-static-analysis/adapters/cpp/testdata/include -std=gnu++17 -o CMakeFiles/app.dir/app/main.cpp.o -c /home/user/ai-static-analysis/adapters/cpp/testdata/app/main.cpp",
+  "file": "/home/user/ai-static-analysis/adapters/cpp/testdata/app/main.cpp",
+  "output": "CMakeFiles/app.dir/app/main.cpp.o"
+}
+]

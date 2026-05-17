@@ -1,15 +1,13 @@
 // index-facts skill — full indexing of a codebase
 
 import { join } from "node:path";
-import type { Facts, FactsDelta } from "../core/schema/types.ts";
-import type { Fingerprint } from "../core/schema/types.ts";
+import type { Facts, Unit, Fingerprint } from "../core/schema/types.ts";
 import {
   generateFingerprint,
   compareFingerprint,
   wipeCache,
 } from "../core/fingerprint/index.ts";
 import {
-  readFacts,
   writeFactsJsonl,
   readFingerprint,
   writeFingerprint,
@@ -22,6 +20,7 @@ export interface IndexOptions {
   repoRoot: string;
   cacheDir?: string;
   profile?: Record<string, string>;
+  onProgress?: (message: string) => void;
 }
 
 export interface IndexResult {
@@ -37,8 +36,10 @@ export async function indexFacts(options: IndexOptions): Promise<IndexResult> {
   const cacheDir = options.cacheDir ?? join(repoRoot, "cache");
   const errors: string[] = [];
   const warnings: string[] = [];
+  const progress = options.onProgress ?? ((msg: string) => console.log(msg));
 
   // 1. Generate fingerprint and compare with cached
+  progress("[1/7] Generating fingerprint...");
   const fingerprint = await generateFingerprint(repoRoot, { profile });
   const cachedFp = await readFingerprint(cacheDir);
   if (cachedFp) {
@@ -52,6 +53,7 @@ export async function indexFacts(options: IndexOptions): Promise<IndexResult> {
   }
 
   // 2. Detect languages
+  progress("[2/7] Detecting languages...");
   const registry = createRegistry();
   const detected = await registry.detectAll(repoRoot);
   if (detected.length === 0) {
@@ -59,6 +61,7 @@ export async function indexFacts(options: IndexOptions): Promise<IndexResult> {
   }
 
   // 3. Doctor check — bootstrap if tools are missing, then recheck
+  progress("[3/7] Running doctor checks...");
   const activeLangs: string[] = [];
   for (const { lang } of detected) {
     const adapter = registry.getLanguageAdapter(lang)!;
@@ -93,22 +96,23 @@ export async function indexFacts(options: IndexOptions): Promise<IndexResult> {
     }
   }
 
-  // 4. Enumerate units for all active languages
-  const allUnits = (
-    await Promise.all(
-      activeLangs.map(async (lang) => {
-        const adapter = registry.getLanguageAdapter(lang)!;
-        try {
-          return await adapter.enumerateUnits(repoRoot, profile);
-        } catch (e) {
-          errors.push(`${lang}: enumerateUnits failed: ${e}`);
-          return [];
-        }
-      }),
-    )
-  ).flat();
+  // 4. Enumerate units for all active languages (track per-lang ownership)
+  progress("[4/7] Enumerating units...");
+  const unitEntries = await Promise.all(
+    activeLangs.map(async (lang): Promise<[string, Unit[]]> => {
+      const adapter = registry.getLanguageAdapter(lang)!;
+      try {
+        return [lang, await adapter.enumerateUnits(repoRoot, profile)];
+      } catch (e) {
+        errors.push(`${lang}: enumerateUnits failed: ${e}`);
+        return [lang, [] as Unit[]];
+      }
+    }),
+  );
+  const unitsByLang = new Map(unitEntries);
 
   // 5. Index units — collect deltas and apply to empty facts
+  progress("[5/7] Indexing units...");
   let facts: Facts = {
     schema_version: 1,
     snapshot: {
@@ -125,12 +129,13 @@ export async function indexFacts(options: IndexOptions): Promise<IndexResult> {
     diagnostics: [],
   };
 
+  // Build a set of unit IDs per lang for diagnose phase
+  const unitIdsByLang = new Map<string, Set<string>>();
   for (const lang of activeLangs) {
-    const adapter = registry.getLanguageAdapter(lang)!;
-    const langUnits = allUnits.filter(
-      (u) => u.id.startsWith(`unit:${lang}:`),
-    );
+    const langUnits = unitsByLang.get(lang) ?? [];
+    unitIdsByLang.set(lang, new Set(langUnits.map((u) => u.id)));
     if (langUnits.length === 0) continue;
+    const adapter = registry.getLanguageAdapter(lang)!;
     try {
       const delta = await adapter.indexUnits(langUnits, profile);
       facts = applyDelta(facts, delta);
@@ -140,14 +145,16 @@ export async function indexFacts(options: IndexOptions): Promise<IndexResult> {
   }
 
   // 6. Diagnose
+  progress("[6/7] Running diagnostics...");
   for (const lang of activeLangs) {
     const adapter = registry.getLanguageAdapter(lang)!;
-    const langUnits = facts.units.filter(
-      (u) => u.id.startsWith(`unit:${lang}:`),
-    );
+    const ids = unitIdsByLang.get(lang)!;
+    const langUnits = facts.units.filter((u) => ids.has(u.id));
     if (langUnits.length === 0) continue;
     try {
-      const diags = await adapter.diagnose(langUnits, profile);
+      // Pass already-computed deps to avoid redundant goList calls
+      const langDeps = facts.deps.filter((d) => ids.has(d.from_unit_id));
+      const diags = await adapter.diagnose(langUnits, profile, langDeps);
       facts.diagnostics.push(...diags);
     } catch (e) {
       warnings.push(`${lang}: diagnose failed: ${e}`);
@@ -155,7 +162,11 @@ export async function indexFacts(options: IndexOptions): Promise<IndexResult> {
   }
 
   // 7. Persist
+  progress("[7/7] Persisting facts and indexes...");
   await writeFactsJsonl(cacheDir, facts);
+  // Invalidate in-process query cache after write (dynamic import to avoid circular dependency)
+  const { clearFactsCache } = await import("./query.ts");
+  clearFactsCache();
   await writeFingerprint(cacheDir, fingerprint);
   await buildIndexes(cacheDir, facts);
 

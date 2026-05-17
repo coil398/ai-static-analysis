@@ -1,8 +1,7 @@
 import { mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { Facts, Fingerprint, Insights, Ref } from "../schema/index.ts";
+import type { Facts, Fingerprint, Insights } from "../schema/index.ts";
 
-const FACTS_FILE = "facts.json";
 const FACTS_DIR = "facts";
 const FINGERPRINT_FILE = "fingerprint.json";
 const INSIGHTS_FILE = "insights.json";
@@ -77,18 +76,23 @@ const FIELD_TO_FILE: Record<FactsField, string> = {
 };
 
 export async function readFacts(cacheDir: string): Promise<Facts | null> {
-  // Auto-detect: JSONL dir takes priority over legacy JSON file
-  const factsDir = join(cacheDir, FACTS_DIR);
-  if (await dirExists(factsDir)) {
-    return readFactsJsonl(cacheDir);
-  }
-  return readJson<Facts>(join(cacheDir, FACTS_FILE));
+  return readFactsPartial(cacheDir, ALL_FIELDS);
+}
+
+/** Meta stored in facts/meta.json, including a write-completion marker. */
+interface FactsMeta {
+  schema_version: number;
+  snapshot: Facts["snapshot"];
+  meta?: Facts["meta"];
+  /** Set to true only after all JSONL data files have been written. */
+  write_complete?: boolean;
 }
 
 /**
  * Read only the specified fields from JSONL storage.
  * Unloaded fields are set to empty arrays.
- * Falls back to full read for legacy JSON format.
+ * Returns null if the facts directory is missing, meta.json is absent,
+ * or a previous write was interrupted (write_complete !== true).
  */
 export async function readFactsPartial(
   cacheDir: string,
@@ -99,10 +103,11 @@ export async function readFactsPartial(
     return null;
   }
 
-  const meta = await readJson<Pick<Facts, "schema_version" | "snapshot" | "meta">>(
-    join(factsDir, "meta.json"),
-  );
+  const meta = await readJson<FactsMeta>(join(factsDir, "meta.json"));
   if (!meta) return null;
+
+  // Reject incomplete writes (interrupted before meta.json was finalized)
+  if (meta.write_complete !== true) return null;
 
   const fieldSet = new Set(fields);
   const results = await Promise.all(
@@ -128,18 +133,6 @@ export async function readFactsPartial(
   };
 }
 
-async function readFactsJsonl(cacheDir: string): Promise<Facts | null> {
-  return readFactsPartial(cacheDir, ALL_FIELDS);
-}
-
-export async function writeFacts(
-  cacheDir: string,
-  facts: Facts,
-): Promise<void> {
-  await ensureDir(cacheDir);
-  await writeJson(join(cacheDir, FACTS_FILE), facts);
-}
-
 export async function writeFactsJsonl(
   cacheDir: string,
   facts: Facts,
@@ -147,14 +140,17 @@ export async function writeFactsJsonl(
   const factsDir = join(cacheDir, FACTS_DIR);
   await ensureDir(factsDir);
 
-  const meta: Pick<Facts, "schema_version" | "snapshot" | "meta"> = {
+  // Write sequence: invalidate meta → write data → finalize meta.
+  // If interrupted mid-write, write_complete will be false and next read returns null.
+  const metaPath = join(factsDir, "meta.json");
+  const incompleteMeta: FactsMeta = {
     schema_version: facts.schema_version,
     snapshot: facts.snapshot,
     meta: facts.meta,
+    write_complete: false,
   };
+  await writeJson(metaPath, incompleteMeta);
 
-  // Write data files first, then meta.json last.
-  // If interrupted, stale meta.json signals inconsistency on next read.
   await writeJsonl(join(factsDir, "units.jsonl"), facts.units);
   await writeJsonl(join(factsDir, "files.jsonl"), facts.files);
   await writeJsonl(join(factsDir, "deps.jsonl"), facts.deps);
@@ -163,7 +159,9 @@ export async function writeFactsJsonl(
   await writeJsonl(join(factsDir, "type_relations.jsonl"), facts.type_relations);
   await writeJsonl(join(factsDir, "call_edges.jsonl"), facts.call_edges);
   await writeJsonl(join(factsDir, "diagnostics.jsonl"), facts.diagnostics);
-  await writeJson(join(factsDir, "meta.json"), meta);
+
+  const completeMeta: FactsMeta = { ...incompleteMeta, write_complete: true };
+  await writeJson(metaPath, completeMeta);
 }
 
 // --- Fingerprint ---

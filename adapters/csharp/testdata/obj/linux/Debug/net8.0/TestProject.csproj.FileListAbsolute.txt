@@ -1,0 +1,15 @@
+/home/kawase/ghq/github.com/astran-jp/motitan-api/.claude/skills/ai-static-analysis/adapters/csharp/testdata/bin/linux/Debug/net8.0/TestProject
+/home/kawase/ghq/github.com/astran-jp/motitan-api/.claude/skills/ai-static-analysis/adapters/csharp/testdata/bin/linux/Debug/net8.0/TestProject.deps.json
+/home/kawase/ghq/github.com/astran-jp/motitan-api/.claude/skills/ai-static-analysis/adapters/csharp/testdata/bin/linux/Debug/net8.0/TestProject.runtimeconfig.json
+/home/kawase/ghq/github.com/astran-jp/motitan-api/.claude/skills/ai-static-analysis/adapters/csharp/testdata/bin/linux/Debug/net8.0/TestProject.dll
+/home/kawase/ghq/github.com/astran-jp/motitan-api/.claude/skills/ai-static-analysis/adapters/csharp/testdata/bin/linux/Debug/net8.0/TestProject.pdb
+/home/kawase/ghq/github.com/astran-jp/motitan-api/.claude/skills/ai-static-analysis/adapters/csharp/testdata/obj/linux/Debug/net8.0/TestProject.GeneratedMSBuildEditorConfig.editorconfig
+/home/kawase/ghq/github.com/astran-jp/motitan-api/.claude/skills/ai-static-analysis/adapters/csharp/testdata/obj/linux/Debug/net8.0/TestProject.AssemblyInfoInputs.cache
+/home/kawase/ghq/github.com/astran-jp/motitan-api/.claude/skills/ai-static-analysis/adapters/csharp/testdata/obj/linux/Debug/net8.0/TestProject.AssemblyInfo.cs
+/home/kawase/ghq/github.com/astran-jp/motitan-api/.claude/skills/ai-static-analysis/adapters/csharp/testdata/obj/linux/Debug/net8.0/TestProject.csproj.CoreCompileInputs.cache
+/home/kawase/ghq/github.com/astran-jp/motitan-api/.claude/skills/ai-static-analysis/adapters/csharp/testdata/obj/linux/Debug/net8.0/TestProject.sourcelink.json
+/home/kawase/ghq/github.com/astran-jp/motitan-api/.claude/skills/ai-static-analysis/adapters/csharp/testdata/obj/linux/Debug/net8.0/TestProject.dll
+/home/kawase/ghq/github.com/astran-jp/motitan-api/.claude/skills/ai-static-analysis/adapters/csharp/testdata/obj/linux/Debug/net8.0/refint/TestProject.dll
+/home/kawase/ghq/github.com/astran-jp/motitan-api/.claude/skills/ai-static-analysis/adapters/csharp/testdata/obj/linux/Debug/net8.0/TestProject.pdb
+/home/kawase/ghq/github.com/astran-jp/motitan-api/.claude/skills/ai-static-analysis/adapters/csharp/testdata/obj/linux/Debug/net8.0/TestProject.genruntimeconfig.cache
+/home/kawase/ghq/github.com/astran-jp/motitan-api/.claude/skills/ai-static-analysis/adapters/csharp/testdata/obj/linux/Debug/net8.0/ref/TestProject.dll

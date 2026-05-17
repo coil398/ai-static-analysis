@@ -13,6 +13,9 @@ import type {
   File,
   Dep,
   Symbol,
+  Ref,
+  TypeRelation,
+  CallEdge,
   FactsDelta,
   Diagnostic,
 } from "../../core/schema/types.ts";
@@ -21,8 +24,12 @@ import {
   whichTool,
   hashFile,
   isGenerated,
+  hashSig,
   collectFiles,
   detectCyclicDeps,
+  LspClient,
+  type LspDocumentSymbol,
+  type LspLocation,
 } from "../shared/index.ts";
 
 export class PythonLanguageAdapter implements LanguageAdapter {
@@ -67,6 +74,7 @@ export class PythonLanguageAdapter implements LanguageAdapter {
       { name: "ruff", purpose: "fast linting and formatting" },
       { name: "mypy", purpose: "type checking" },
       { name: "pyright", purpose: "type checking (alternative)" },
+      { name: "pyright-langserver", purpose: "symbols/refs/call_edges/type_relations (LSP)" },
       { name: "bandit", purpose: "security analysis" },
       { name: "pytest", purpose: "testing" },
     ];
@@ -97,7 +105,7 @@ export class PythonLanguageAdapter implements LanguageAdapter {
     }
 
     const pipCmd = pip.includes("pip3") ? "pip3" : "pip";
-    const tools = ["ruff", "mypy", "bandit", "pytest"];
+    const tools = ["ruff", "mypy", "bandit", "pytest", "pyright"];
 
     for (const tool of tools) {
       if (await whichTool(tool)) {
@@ -188,6 +196,9 @@ export class PythonLanguageAdapter implements LanguageAdapter {
     const deps: Dep[] = [];
     const unitIds = new Set(units.map((u) => u.id));
 
+    // Collect all .py files for pyright processing
+    const allPyFiles: Array<{ relPath: string; unitId: string }> = [];
+
     for (const unit of units) {
       const unitDir = resolve(repoRoot, unit.path);
       const sourceFiles = await collectFiles(unitDir, [".py", ".pyi"], repoRoot);
@@ -206,6 +217,10 @@ export class PythonLanguageAdapter implements LanguageAdapter {
           generated,
         });
 
+        if (!generated) {
+          allPyFiles.push({ relPath, unitId: unit.id });
+        }
+
         // Parse imports for deps
         const importedUnits = await this.parseImports(absPath, repoRoot, unitIds);
         for (const depUnitId of importedUnits) {
@@ -222,10 +237,346 @@ export class PythonLanguageAdapter implements LanguageAdapter {
       }
     }
 
+    // --- pyright LSP integration (degrade if unavailable) ---
+    const pyrightCmd = (await whichTool("pyright-langserver")) !== null
+      ? "pyright-langserver"
+      : (await whichTool("basedpyright-langserver")) !== null
+        ? "basedpyright-langserver"
+        : null;
+
+    let symbols: Symbol[] = [];
+    let refs: Ref[] = [];
+    let typeRelations: TypeRelation[] = [];
+    let callEdges: CallEdge[] = [];
+
+    if (pyrightCmd !== null && allPyFiles.length > 0) {
+      const client = new LspClient([pyrightCmd, "--stdio"], repoRoot);
+      try {
+        const result = await this.indexWithPyright(repoRoot, allPyFiles, unitIds, client);
+        symbols = result.symbols;
+        refs = result.refs;
+        typeRelations = result.typeRelations;
+        callEdges = result.callEdges;
+      } catch {
+        // pyright crashed or exited — degrade gracefully with empty LSP results
+      } finally {
+        await client.shutdown();
+      }
+    }
+
     return {
-      added: { units, files, deps, symbols: [] },
+      added: {
+        units,
+        files,
+        deps,
+        symbols,
+        refs,
+        type_relations: typeRelations,
+        call_edges: callEdges,
+      },
       removed: {},
     };
+  }
+
+  private async indexWithPyright(
+    repoRoot: string,
+    pyFiles: Array<{ relPath: string; unitId: string }>,
+    unitIds: Set<string>,
+    client: LspClient,
+  ): Promise<{
+    symbols: Symbol[];
+    refs: Ref[];
+    typeRelations: TypeRelation[];
+    callEdges: CallEdge[];
+  }> {
+    const symbols: Symbol[] = [];
+    const callEdges: CallEdge[] = [];
+    const typeRelations: TypeRelation[] = [];
+    const refs: Ref[] = [];
+
+    const symbolByPos = new Map<string, Symbol>(); // "relPath:line:col" -> Symbol
+    const funcSymbols: Array<{ symbol: Symbol; relPath: string; line: number; col: number }> = [];
+    const refTargets: Array<{ symbol: Symbol; relPath: string; line: number; col: number }> = [];
+
+    // Open all documents upfront (required by pyright before documentSymbol requests)
+    for (const { relPath } of pyFiles) {
+      try {
+        await client.openDocument(relPath, "python");
+      } catch {
+        // Ignore — file may not exist or be unreadable
+      }
+    }
+
+    // 1. Collect symbols from all files
+    for (const { relPath, unitId } of pyFiles) {
+      let lspSyms: LspDocumentSymbol[];
+      try {
+        lspSyms = await client.documentSymbols(relPath);
+      } catch {
+        continue;
+      }
+
+      const fileSyms = this.collectSymbolsFromLsp(lspSyms, relPath, unitId);
+      for (const { symbol: sym, line, col } of fileSyms) {
+        symbols.push(sym);
+        symbolByPos.set(`${relPath}:${line}:${col}`, sym);
+
+        if (sym.kind === "function" || sym.kind === "method") {
+          funcSymbols.push({ symbol: sym, relPath, line, col });
+        }
+        if (sym.kind === "class" || sym.kind === "field" || sym.kind === "variable" || sym.kind === "constant") {
+          refTargets.push({ symbol: sym, relPath, line, col });
+        }
+      }
+    }
+
+    // 2. Collect call edges from functions/methods
+    for (const { symbol, relPath, line, col } of funcSymbols) {
+      let hierarchy;
+      try {
+        hierarchy = await client.prepareCallHierarchy(relPath, line, col);
+      } catch {
+        continue;
+      }
+
+      for (const item of hierarchy) {
+        let outgoing;
+        try {
+          outgoing = await client.outgoingCalls(item);
+        } catch {
+          continue;
+        }
+
+        for (const call of outgoing) {
+          const calleeAbsPath = LspClient.uriToPath(call.to.uri);
+          const calleeRelPath = relative(repoRoot, calleeAbsPath);
+          const calleeLine = call.to.selectionRange.start.line;
+          const calleeCol = call.to.selectionRange.start.character;
+          const calleeSym = symbolByPos.get(`${calleeRelPath}:${calleeLine}:${calleeCol}`);
+          if (!calleeSym) continue;
+          if (!unitIds.has(calleeSym.unit_id)) continue;
+
+          const callSite = call.fromRanges[0];
+          if (!callSite) continue;
+          const callerFileId = `file:${relPath}`;
+
+          callEdges.push({
+            caller_id: symbol.id,
+            callee_id: calleeSym.id,
+            site: {
+              file_id: callerFileId,
+              position: { line: callSite.start.line + 1, column: callSite.start.character + 1 },
+            },
+            dispatch: "static",
+          });
+
+          refs.push({
+            from_symbol_id: symbol.id,
+            to_symbol_id: calleeSym.id,
+            site: {
+              file_id: callerFileId,
+              position: { line: callSite.start.line + 1, column: callSite.start.character + 1 },
+            },
+            kind: "call",
+            confidence: "certain",
+          });
+        }
+      }
+    }
+
+    // 3. Collect type relations from class inheritance via extract_bases.py (ast module).
+    // Pyright does not support textDocument/implementation or prepareTypeHierarchy.
+    const inheritanceRelations = await this.detectClassInheritance(repoRoot, pyFiles, symbols);
+    typeRelations.push(...inheritanceRelations);
+
+    // 4. Collect non-call references
+    const callRefKeys = new Set(
+      refs.map((r) => `${r.to_symbol_id}@${r.site.file_id}:${r.site.position.line}:${r.site.position.column}`),
+    );
+
+    for (const { symbol: targetSym, relPath: tRelPath, line: tLine, col: tCol } of refTargets) {
+      let refLocs: LspLocation[];
+      try {
+        refLocs = await client.references(tRelPath, tLine, tCol);
+      } catch {
+        continue;
+      }
+
+      for (const loc of refLocs) {
+        const locAbsPath = LspClient.uriToPath(loc.uri);
+        const locRelPath = relative(repoRoot, locAbsPath);
+
+        // Skip declaration itself
+        if (locRelPath === tRelPath && loc.range.start.line === tLine && loc.range.start.character === tCol) continue;
+
+        const fileId = `file:${locRelPath}`;
+        const locLine = loc.range.start.line + 1;
+        const locCol = loc.range.start.character + 1;
+        const refKey = `${targetSym.id}@${fileId}:${locLine}:${locCol}`;
+        if (callRefKeys.has(refKey)) continue;
+
+        const fromSymbol = this.findEnclosingSymbol(symbols, fileId, locLine);
+
+        const kind = targetSym.kind === "class"
+          ? "type_ref"
+          : targetSym.kind === "field"
+            ? "field_access"
+            : "reference";
+
+        refs.push({
+          from_symbol_id: fromSymbol?.id ?? `file_scope:${locRelPath}`,
+          to_symbol_id: targetSym.id,
+          site: {
+            file_id: fileId,
+            position: { line: locLine, column: locCol },
+          },
+          kind,
+          confidence: "certain",
+        });
+      }
+    }
+
+    return { symbols, refs, typeRelations, callEdges };
+  }
+
+  private collectSymbolsFromLsp(
+    lspSyms: LspDocumentSymbol[],
+    relPath: string,
+    unitId: string,
+  ): Array<{ symbol: Symbol; line: number; col: number }> {
+    const result: Array<{ symbol: Symbol; line: number; col: number }> = [];
+    for (const lspSym of lspSyms) {
+      const line = lspSym.selectionRange.start.line;
+      const col = lspSym.selectionRange.start.character;
+      const sym = this.lspSymbolToPySymbol(lspSym, relPath, unitId, line, col);
+      result.push({ symbol: sym, line, col });
+      if (lspSym.children) {
+        result.push(...this.collectSymbolsFromLsp(lspSym.children, relPath, unitId));
+      }
+    }
+    return result;
+  }
+
+  private lspSymbolToPySymbol(
+    lspSym: LspDocumentSymbol,
+    relPath: string,
+    unitId: string,
+    line: number,
+    col: number,
+  ): Symbol {
+    const kind = this.mapLspSymbolKind(lspSym.kind);
+    const name = lspSym.name;
+    const unitPath = unitId.replace(/^unit:py:/, "");
+    const sigHash = hashSig(`${name}:${kind}:${line}`);
+
+    return {
+      id: `sym:py:${unitPath}#${kind}#${name}#sig:${sigHash}`,
+      unit_id: unitId,
+      name,
+      kind,
+      // Python: exported if name doesn't start with '_'
+      exported: !name.startsWith("_"),
+      decl: {
+        file_id: `file:${relPath}`,
+        position: { line: line + 1, column: col + 1 },
+      },
+    };
+  }
+
+  private mapLspSymbolKind(kind: number): string {
+    const map: Record<number, string> = {
+      2: "module",
+      5: "class",
+      6: "method",
+      8: "field",
+      12: "function",
+      13: "variable",
+      14: "constant",
+    };
+    return map[kind] ?? "unknown";
+  }
+
+  /**
+   * Find the enclosing function/method symbol for a given file position.
+   * Returns the most specific (closest line) function that declares before the given line.
+   */
+  private findEnclosingSymbol(
+    symbols: Symbol[],
+    fileId: string,
+    line: number,
+  ): Symbol | null {
+    const fileFuncs = symbols
+      .filter(
+        (s) =>
+          s.decl.file_id === fileId &&
+          (s.kind === "function" || s.kind === "method"),
+      )
+      .sort((a, b) => a.decl.position.line - b.decl.position.line);
+
+    for (let i = 0; i < fileFuncs.length; i++) {
+      const sym = fileFuncs[i]!;
+      const nextStart =
+        i + 1 < fileFuncs.length
+          ? fileFuncs[i + 1]!.decl.position.line
+          : Infinity;
+      if (sym.decl.position.line <= line && line < nextStart) {
+        return sym;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Detect class inheritance relations by running extract_bases.py (Python ast module).
+   * Pyright does not support textDocument/implementation or prepareTypeHierarchy,
+   * so we use Python's own parser for reliable class hierarchy extraction.
+   */
+  private async detectClassInheritance(
+    repoRoot: string,
+    pyFiles: Array<{ relPath: string; unitId: string }>,
+    symbols: Symbol[],
+  ): Promise<TypeRelation[]> {
+    const relations: TypeRelation[] = [];
+
+    const classByName = new Map<string, Symbol>();
+    for (const sym of symbols) {
+      if (sym.kind === "class") {
+        classByName.set(sym.name, sym);
+      }
+    }
+
+    const scriptPath = resolve(import.meta.dirname!, "extract_bases.py");
+    const absPaths = pyFiles.map(({ relPath }) => resolve(repoRoot, relPath));
+    if (absPaths.length === 0) return relations;
+
+    const result = await exec(["python3", scriptPath, ...absPaths], { cwd: repoRoot });
+    if (result.exitCode !== 0) return relations;
+
+    for (const line of result.stdout.split("\n")) {
+      if (!line.trim()) continue;
+      let entry: { class: string; bases: string[] };
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      const classSymbol = classByName.get(entry.class);
+      if (!classSymbol) continue;
+
+      for (const baseName of entry.bases) {
+        const baseSymbol = classByName.get(baseName);
+        if (!baseSymbol) continue;
+
+        relations.push({
+          from_type_id: classSymbol.id,
+          to_type_id: baseSymbol.id,
+          kind: "implements",
+        });
+      }
+    }
+
+    return relations;
   }
 
   async diagnose(

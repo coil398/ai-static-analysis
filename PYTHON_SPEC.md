@@ -9,12 +9,18 @@
 | ツール | 用途 | 必須 |
 |---|---|---|
 | `python` / `python3` | ランタイム | MUST |
+| `pyright-langserver` / `basedpyright-langserver` | symbols/refs/call_edges (LSP) | SHOULD |
 | `ruff` | リンティング・フォーマット | SHOULD |
-| `mypy` | 型チェック | MAY |
+| `mypy` | 型チェック（diagnostics） | MAY |
 | `bandit` | セキュリティ分析 | MAY |
 | `pytest` | テスト | MAY |
 
 `doctor()` で `python` の存在を確認する。`python` が無い場合は `ok: false`。
+`pyright-langserver` 未インストール時は symbols/refs/call_edges が空配列にフォールバック。
+
+### type_relations の取得方法
+
+Pyright は `textDocument/implementation` および `textDocument/prepareTypeHierarchy` を未サポートのため、type_relations は Python 標準ライブラリの `ast` モジュールで取得する。`adapters/python/extract_bases.py` がクラス定義の基底クラスを抽出し、JSONL で出力する。`metaclass=` 等のキーワード引数は `ast.ClassDef.bases` に含まれないため自動的に除外される。`Generic[T]` 等の Subscript は基底名に正規化される。
 
 ---
 

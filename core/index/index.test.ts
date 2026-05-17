@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Facts } from "../schema/index.ts";
 import { buildIndexes, loadUnitByFile, loadSymbolByName, loadRefsBySymbol } from "./index.ts";
-import { readFacts, writeFacts, writeFactsJsonl } from "../storage/storage.ts";
+import { readFacts, writeFactsJsonl } from "../storage/storage.ts";
 
 const sampleFacts: Facts = {
   schema_version: 1,
@@ -134,24 +134,14 @@ describe("buildIndexes + loadXxx", () => {
   });
 });
 
-describe("readFacts JSONL auto-detection", () => {
+describe("readFacts JSONL", () => {
   let tempDir: string;
 
   afterEach(async () => {
     if (tempDir) await rm(tempDir, { recursive: true, force: true });
   });
 
-  test("readFacts falls back to JSON when no JSONL dir", async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "index-test-"));
-    const cacheDir = join(tempDir, "cache");
-    await writeFacts(cacheDir, sampleFacts);
-    const result = await readFacts(cacheDir);
-    expect(result).not.toBeNull();
-    expect(result!.units).toHaveLength(2);
-    expect(result!.schema_version).toBe(1);
-  });
-
-  test("readFacts uses JSONL when cache/facts/ dir exists", async () => {
+  test("readFacts reads JSONL and preserves all fields", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "index-test-"));
     const cacheDir = join(tempDir, "cache");
     await writeFactsJsonl(cacheDir, sampleFacts);
@@ -164,13 +154,6 @@ describe("readFacts JSONL auto-detection", () => {
     expect(result!.deps).toHaveLength(1);
     expect(result!.schema_version).toBe(1);
     expect(result!.snapshot.commit).toBe("abc123");
-  });
-
-  test("JSONL round-trip preserves all fields", async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "index-test-"));
-    const cacheDir = join(tempDir, "cache");
-    await writeFactsJsonl(cacheDir, sampleFacts);
-    const result = await readFacts(cacheDir);
     expect(result!.units[0]).toEqual(sampleFacts.units[0]);
     expect(result!.refs[0]).toEqual(sampleFacts.refs[0]);
     expect(result!.diagnostics).toEqual([]);
@@ -178,7 +161,7 @@ describe("readFacts JSONL auto-detection", () => {
     expect(result!.call_edges).toEqual([]);
   });
 
-  test("readFacts returns null when neither format exists", async () => {
+  test("readFacts returns null when no JSONL dir exists", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "index-test-"));
     const cacheDir = join(tempDir, "cache");
     const result = await readFacts(cacheDir);

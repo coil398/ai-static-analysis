@@ -10,6 +10,8 @@ import {
   parseDuplOutput,
   detectCyclicDeps,
 } from "./language-adapter.ts";
+import { GoplsLspClient } from "./lsp-client.ts";
+import { lspDiagnosticToInternal } from "./gopls.ts";
 import { whichTool } from "./utils.ts";
 
 const TESTDATA = resolve(import.meta.dir, "testdata");
@@ -249,6 +251,165 @@ describe("GoLanguageAdapter", () => {
     const cycleDiags = diags.filter((d) => d.tool === "cycle_detector");
     expect(cycleDiags).toEqual([]);
   }, 30_000);
+
+  test("indexUnits excludes generated files from gopls analysis", async () => {
+    const units = await adapter.enumerateUnits(TESTDATA, {});
+    const delta = await adapter.indexUnits(units, {});
+
+    // generated.go は files に含まれること
+    const genFile = delta.added.files?.find((f) => f.id === "file:pkg/generated.go");
+    expect(genFile).toBeDefined();
+    expect(genFile?.generated).toBe(true);
+
+    // generated ファイルから生成された symbol は含まれないこと（gopls 解析から除外されている）
+    if (hasGopls) {
+      const symbols = delta.added.symbols ?? [];
+      // generated.go 内のシンボルは除外されている
+      const genSymbols = symbols.filter((s) => s.decl.file_id === "file:pkg/generated.go");
+      expect(genSymbols).toHaveLength(0);
+    }
+  }, 30_000);
+
+  test("setExternalLspClient allows injecting an external client", async () => {
+    const adapterWithClient = new GoLanguageAdapter();
+    // null を設定してデフォルト動作に戻せること
+    adapterWithClient.setExternalLspClient(null);
+    expect(adapterWithClient["externalClient"]).toBeNull();
+  });
+
+  test.skipIf(!hasGopls)("setExternalLspClient uses provided client without shutdown", async () => {
+    const adapterWithClient = new GoLanguageAdapter();
+    const externalClient = new GoplsLspClient(TESTDATA);
+    adapterWithClient.setExternalLspClient(externalClient);
+
+    try {
+      const units = await adapterWithClient.enumerateUnits(TESTDATA, {});
+      const delta = await adapterWithClient.indexUnits(units, {});
+      // 外部クライアントを使っても正常に解析できること
+      expect(delta.added.files?.length).toBeGreaterThan(0);
+      if (hasGopls) {
+        expect(delta.added.symbols?.length).toBeGreaterThan(0);
+      }
+    } finally {
+      // 外部クライアントを手動で shutdown する
+      await externalClient.shutdown();
+    }
+  }, 60_000);
+
+  test.skipIf(!hasGopls)(
+    "diagnose surfaces gopls built-in analyzer hints (modernize/stringsbuilder)",
+    async () => {
+      const units = await adapter.enumerateUnits(TESTDATA, {});
+      const diags = await adapter.diagnose(units, {});
+
+      // testdata/pkg/loop_concat.go contains a `for ... { s += p }` pattern
+      // that gopls' modernize/stringsbuilder analyzer flags as a Hint.
+      const goplsDiags = diags.filter((d) => d.tool.startsWith("gopls"));
+      expect(goplsDiags.length).toBeGreaterThan(0);
+
+      const sbHit = goplsDiags.find(
+        (d) =>
+          d.tool === "gopls/stringsbuilder" &&
+          d.file_id === "file:pkg/loop_concat.go",
+      );
+      expect(sbHit).toBeDefined();
+      expect(sbHit!.severity).toBe("hint");
+      expect(sbHit!.message).toMatch(/string \+= string/i);
+      expect(sbHit!.position.line).toBeGreaterThan(0);
+      expect(sbHit!.position.column).toBeGreaterThan(0);
+    },
+    60_000,
+  );
+});
+
+describe("lspDiagnosticToInternal", () => {
+  test("maps LSP severities to internal severities", () => {
+    const baseRange = {
+      start: { line: 0, character: 0 },
+      end: { line: 0, character: 5 },
+    };
+    const cases: Array<[number, "error" | "warning" | "info" | "hint"]> = [
+      [1, "error"],
+      [2, "warning"],
+      [3, "info"],
+      [4, "hint"],
+    ];
+    for (const [lspSev, expected] of cases) {
+      const out = lspDiagnosticToInternal(
+        { range: baseRange, severity: lspSev, message: "m" },
+        "x.go",
+      );
+      expect(out.severity).toBe(expected);
+    }
+  });
+
+  test("defaults to warning when severity is omitted", () => {
+    const out = lspDiagnosticToInternal(
+      {
+        range: {
+          start: { line: 1, character: 2 },
+          end: { line: 1, character: 3 },
+        },
+        message: "m",
+      },
+      "x.go",
+    );
+    expect(out.severity).toBe("warning");
+  });
+
+  test("encodes analyzer name in tool prefix and converts position to 1-based", () => {
+    const out = lspDiagnosticToInternal(
+      {
+        range: {
+          start: { line: 9, character: 4 },
+          end: { line: 9, character: 8 },
+        },
+        severity: 4,
+        source: "stringsbuilder",
+        code: "default",
+        message: "loop concat",
+      },
+      "pkg/foo.go",
+    );
+    expect(out.tool).toBe("gopls/stringsbuilder");
+    expect(out.file_id).toBe("file:pkg/foo.go");
+    expect(out.position).toEqual({ line: 10, column: 5 });
+    // "default" code is omitted from the message; non-default codes are appended.
+    expect(out.message).toBe("loop concat");
+  });
+
+  test("appends non-default code to message", () => {
+    const out = lspDiagnosticToInternal(
+      {
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 1 },
+        },
+        severity: 2,
+        source: "vet",
+        code: "shadow",
+        message: "declaration shadows",
+      },
+      "x.go",
+    );
+    expect(out.message).toBe("declaration shadows [shadow]");
+    expect(out.tool).toBe("gopls/vet");
+  });
+
+  test("falls back to bare gopls tool when source is missing", () => {
+    const out = lspDiagnosticToInternal(
+      {
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 1 },
+        },
+        severity: 1,
+        message: "syntax",
+      },
+      "x.go",
+    );
+    expect(out.tool).toBe("gopls");
+  });
 });
 
 describe("parseVetOutput", () => {

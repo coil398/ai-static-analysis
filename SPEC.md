@@ -1,5 +1,5 @@
 # static-analysis 仕様書（案）
-※本書は「各プロジェクトで ./claude/skills/static-analysis に clone して使う」前提で、静的解析基盤（facts生成・更新・クエリ・検証）を実装するための指示書です。
+※本書は「各プロジェクトで .claude/skills/ai-static-analysis に clone して使う」前提で、静的解析基盤（facts生成・更新・クエリ・検証）を実装するための指示書です。
 
 ---
 
@@ -8,7 +8,9 @@
 - `static-analysis` は **独立したGitリポジトリ**である。
 - 各プロジェクトで以下に clone して導入する。
 
-  - `.claude/skills/static-analysis/`  （このディレクトリが本レポジトリ）
+  - `.claude/skills/ai-static-analysis/`  （このディレクトリが本レポジトリ）
+  - Claude Code は `.claude/skills/<name>/SKILL.md` を自動検出する
+- 導入手順の詳細は `setup.md` を参照。
 
 - 生成物（キャッシュ等）は Git に含めない。
 - 実解析は **決定論ツール（LSP/コンパイラ/静的解析器等）** を利用し、AIの推測で代替しない。
@@ -37,8 +39,9 @@ static-analysis/
 ├── skills/      # AIから呼ぶ操作単位（index/update/query/run 等）
 ├── cache/       # 生成物（必ず .gitignore）
 │   ├── fingerprint.json
-│   ├── facts.json  # もしくは facts/ 配下に分割（後述）
-│   └── logs/
+│   ├── facts/   # JSONL 分割形式（units.jsonl, files.jsonl, ... + meta.json）
+│   ├── index/   # 派生インデックス（unit_by_file.json, symbol_by_name.json, refs_by_symbol.json）
+│   └── insights.json  # AI 分析結果（オプション）
 ├── docs/
 └── SPEC.md      # 本書（この仕様書）
 ```
@@ -121,9 +124,7 @@ static-analysis/
 ### 5.1 ストレージ形式
 生成物は`cache/`内に保存する。
 
-フォーマットはJSONとし、以下のどちらでもよい（実装で選択）：
-- **単一ファイル**：`cache/facts.json`
-- **分割**：`cache/facts/*.jsonl`（大規模向け、後述）
+フォーマットは **JSONL 分割形式**（`cache/facts/*.jsonl`）を使用する。各フィールド（units, files, deps, symbols, refs, type_relations, call_edges, diagnostics）が個別の JSONL ファイルとして保存され、クエリ時に必要なフィールドのみ読み込める。書き込み完了は `cache/facts/meta.json` の `write_complete` フラグで管理する。
 
 ### 5.2 P0（必須）データモデル
 AIが大規模でも安全に判断できる最小セットとして、以下をMUSTで実装する。
@@ -145,9 +146,26 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
 
 ---
 
-## 6. facts.json スキーマ（案）
+## 6. facts スキーマ
 
-### 6.1 トップレベル
+### 6.1 ストレージ構成（JSONL 分割形式）
+
+facts は `cache/facts/` ディレクトリ内に JSONL 分割ファイルとして保存される。各フィールドが個別ファイルに対応し、クエリ時に必要なフィールドのみ読み込める。
+
+```
+cache/facts/
+├── meta.json          # メタ情報 + 書き込み完了マーカー
+├── units.jsonl        # 1行1レコード
+├── files.jsonl
+├── deps.jsonl
+├── symbols.jsonl
+├── refs.jsonl
+├── type_relations.jsonl
+├── call_edges.jsonl
+└── diagnostics.jsonl
+```
+
+**meta.json** の構造:
 ```json
 {
   "schema_version": 1,
@@ -155,20 +173,18 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
     "commit": "abcdef1234",
     "created_at": "2026-02-14T00:00:00+09:00"
   },
-  "units": [],
-  "files": [],
-  "deps": [],
-  "symbols": [],
-  "refs": [],
-  "type_relations": [],
-  "call_edges": [],
-  "diagnostics": [],
-  "meta": {
-    "generator": "static-analysis",
-    "notes": ""
-  }
+  "write_complete": true
 }
 ```
+
+**各 JSONL ファイル** には、対応するオブジェクトが1行1レコードで格納される:
+```
+// units.jsonl（例）
+{"id":"unit:go:internal/service","kind":"go_package","name":"service","path":"internal/service","metadata":{"module":"example.com/app"}}
+{"id":"unit:go:internal/db","kind":"go_package","name":"db","path":"internal/db","metadata":{"module":"example.com/app"}}
+```
+
+> **NOTE**: 以前の単一 JSON ファイル形式（`facts.json`）は廃止済み。`readFacts` は内部で `readFactsPartial(cacheDir, ALL_FIELDS)` を呼び出す薄いラッパー。
 
 ### 6.2 Units
 ```json
@@ -236,7 +252,7 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
 }
 ```
 
-### 6.8 TypeRelations（型関係）
+### 6.7 TypeRelations（型関係）
 ```json
 {
   "from_type_id": "sym:go:internal/service#type#UserRepository#sig:...",
@@ -252,7 +268,7 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
   - `converts_to`：型変換可能
   - `instantiates`：ジェネリクスの具体化
 
-### 6.9 CallEdges（コールグラフ）
+### 6.8 CallEdges（コールグラフ）
 ```json
 {
   "caller_id": "sym:go:internal/handler#func#Handle#sig:...",
@@ -270,7 +286,7 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
   - `dynamic`：関数ポインタ / クロージャ経由
   - `interface`：interface メソッド経由（実際の呼び先は `type_relations` の `implements` と組み合わせて展開）
 
-### 6.7 Diagnostics
+### 6.9 Diagnostics
 ```json
 {
   "file_id": "file:internal/service/user.go",
@@ -293,12 +309,11 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
   - `generated: true/false`をfileに持たせる
   - 既定は「解析対象に含める（ただしmetadataで識別可能）」
 
-### 7.2 SHOULD（推奨：重くなったときの逃げ道）
-- `facts.json`が巨大になる場合に備え、JSON Lines分割を許容する
-  - `cache/facts/units.jsonl`, `files.jsonl`, `symbols.jsonl`, `refs.jsonl`, `type_relations.jsonl`, `call_edges.jsonl`, `diagnostics.jsonl`
-- `refs`は件数が爆発しやすいので分割保存を優先する
-- `impact`クエリの高速化のため、派生インデックスを生成してよい
-  - 例：`cache/index/unit_by_file.json`等（あくまで生成物）
+### 7.2 実装済み（大規模対応）
+- JSONL 分割形式を採用済み：`cache/facts/units.jsonl`, `files.jsonl`, `symbols.jsonl`, `refs.jsonl`, `type_relations.jsonl`, `call_edges.jsonl`, `diagnostics.jsonl`
+- クエリ時に必要なフィールドのみ読み込む部分読み込み（`readFactsPartial`）を実装済み
+- 書き込み完了マーカー（`cache/facts/meta.json` の `write_complete` フラグ）で中断耐性を確保
+- 派生インデックスを生成済み：`cache/index/unit_by_file.json`, `symbol_by_name.json`, `refs_by_symbol.json`
 
 ---
 
@@ -320,23 +335,16 @@ AIが大規模でも安全に判断できる最小セットとして、以下を
 
 ※ `scope`は`repo|unit|files|paths`いずれかで指定できること。
 
-### 8.3 InsightAdapter（SHOULD — AI非決定論解析）
-決定論ツールでは取れない「意味」の層をAIで生成する。
-Facts（決定論）とは完全に分離し、`cache/insights.json` に保存する。
-
-- `tag_intents(scope) -> IntentTag[]`
-- `summarize(scope) -> Summary[]`
-- `detect_bug_smells(scope) -> BugSmell[]`
-- `detect_patterns(scope) -> PatternTag[]`
-- `review_naming(scope) -> NamingIssue[]`
-
-※ `scope` は `{unit_ids?, symbol_ids?, file_ids?}` で対象を絞れる（省略時は全体）。
+### 8.3 InsightAdapter（設計方針: 実装しない）
+決定論ツールでは取れない「意味」の層を AI で生成するが、外部 AI API を呼び出す InsightAdapter は実装しない設計とする。
+Claude Code 自身がスキル定義（analyze-insights.md）を読んで分析を行い、結果を `cache/insights.json` に保存する。
+`skills/insights.ts` はコンテキスト準備（facts + ソースコード読み込み）と query 関数のみを担当する。
 
 #### 設計原則
-- **分離**：insights は facts と混ぜない。別ファイル、別クエリ、オプトイン参照
-- **トレーサビリティ**：全項目に `meta: {model, confidence, generated_at}` を付与
-- **再生成安全**：`cache/insights.json` は安全に全削除できる。モデル更新時は再生成
-- **fingerprint 非依存**：insights の有効性は facts の fingerprint とは別管理（モデル変更で invalidate）
+- 分離: insights は facts と混ぜない。別ファイル、別クエリ、オプトイン参照
+- トレーサビリティ: 全項目に `meta: {model, confidence, generated_at}` を付与
+- 再生成安全: `cache/insights.json` は安全に全削除できる。モデル更新時は再生成
+- fingerprint 非依存: insights の有効性は facts の fingerprint とは別管理（モデル変更で invalidate）
 
 ### 8.4 言語別仕様
 各言語固有の仕様は `<LANG>_SPEC.md`（ルート直下）に記載する。
@@ -371,8 +379,9 @@ Facts（決定論）とは完全に分離し、`cache/insights.json` に保存�
 ### 9.3 Insight（SHOULD — AI非決定論解析）
 **`analyze(scope?)`**：
 1. facts が存在することを確認（insights は facts に依存）
-2. scope 内の unit/symbol/file に対して InsightAdapter を実行
-3. `cache/insights.json` に保存
+2. `skills/insights.ts` の `loadInsightContext` でコンテキスト（facts + ソースコード）を準備
+3. Claude 自身がスキル定義（analyze-insights.md）に従って分析を実行
+4. `cache/insights.json` に保存
 
 **`query_insights(kind, filter?)`**：
 - `intents(target_id?)`：意図タグの一覧・検索
@@ -501,7 +510,28 @@ smell の種類（拡張可能）：
 
 用途：リファクタリング時の構造理解、一貫性チェック。
 
-### 14.6 NamingIssue（命名品質）
+### 14.6 DuplicationHint（重複・共通化ヒント）
+類似コードの検出と共通化の提案を行う。
+
+```json
+{
+  "target_ids": ["sym:go:pkg/a#func#DoX#sig:...", "sym:go:pkg/b#func#DoY#sig:..."],
+  "target_kind": "symbol",
+  "suggestion": "extract_function",
+  "message": "DoX and DoY share identical validation logic (lines 10-25). Extract to a shared helper.",
+  "estimated_savings": 15,
+  "meta": { "model": "claude-sonnet-4-5-20250929", "confidence": 0.80, "generated_at": "2026-02-15T00:00:00Z" }
+}
+```
+
+suggestion の種類:
+- `extract_function`: 共通関数に切り出し
+- `extract_interface`: インターフェースに抽象化
+- `extract_module`: モジュール/パッケージに分離
+- `parameterize`: パラメータ化で共通化
+- `other`
+
+### 14.7 NamingIssue（命名品質）
 紛らわしい・一貫性のない命名を指摘する。
 
 ```json
@@ -522,7 +552,7 @@ issue の種類：
 - `too_generic`：汎用的すぎて意味が不明
 - `other`
 
-### 14.7 共通メタデータ（InsightMeta）
+### 14.8 共通メタデータ（InsightMeta）
 全 insight に必須で付与する。
 
 | フィールド | 型 | 説明 |

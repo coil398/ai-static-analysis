@@ -4,13 +4,18 @@
 
 ## 配置
 
-本レポジトリは各プロジェクトの `.claude/skills/` にクローンして使う。
+本レポジトリは各プロジェクトの `.claude/skills/ai-static-analysis/` にクローンして使う。
+Claude Code はこのディレクトリの `SKILL.md` をエントリポイントとして自動検出する。
 エクスポートされるスキル定義（`*.md`）はレポジトリルートに配置し、Claude が直接参照できるようにする。
+導入手順の詳細は `setup.md` を参照。
 
 ## プロジェクト構造
 
 - `SPEC.md` — 仕様書（設計の正）
 - `*.md`（ルート直下） — エクスポートされるスキル定義（Claude への指示書）
+- `setup.md` — 対象プロジェクトへの導入スキル
+- `templates/` — 対象プロジェクト用テンプレート（CLAUDE.md スニペット等）
+- `scripts/` — フック用スクリプト（SessionStart チェック等）
 - `.claude/skills/` — 開発用メタスキル（このレポジトリ自体の開発支援）
 - `core/` — 共通コア（スキーマ、fingerprint、dispatcher、ストレージ I/O）
 - `adapters/` — 言語別アダプタ
@@ -24,6 +29,7 @@
 - 新しいスキルを作成する際は `.claude/skills/create-skill.md` のプロセスに従う
 - 実装中の気づき・判断の根拠は CLAUDE.md の開発メモに残す
 - 言語アダプタの実装・変更時は対応する `<LANG>_SPEC.md` を更新する
+- 機能追加・言語対応・スキル変更など実装状態が変わった場合は `README.md` の該当箇所（対応言語テーブル、スキル一覧、特徴等）も合わせて更新する
 
 ## スキル一覧
 
@@ -39,45 +45,75 @@
 
 | スキル | 説明 |
 |---|---|
+| `setup` | 対象プロジェクトへの導入（CLAUDE.md テンプレ + SessionStart フック設定） |
 | `index-facts` | コードベース全体の静的解析を実行し、facts を生成 |
 | `update-facts` | 変更ファイルのみを再解析し、facts を差分更新 |
-| `query-facts` | facts に対してクエリを実行（deps/rdeps/defs/refs/diagnostics/impact） |
+| `query-facts` | facts に対してクエリを実行（deps/rdeps/defs/refs/diagnostics/impact）。SARIF エクスポート対応 |
 | `run-actions` | コードのフォーマット・チェック・テストを実行 |
 | `analyze-insights` | facts とソースを読んで AI 分析を実行し、insights を生成 |
 | `query-insights` | cache/insights.json から AI 分析結果をクエリ |
 | `bootstrap-tools` | 不足する解析ツールを自動インストール |
+| `compare-facts` | 2 スナップショット間で facts を diff（units/files/deps/symbols/diagnostics + 影響範囲） |
+| `visualize-graph` | deps / call_edges を Mermaid または DOT でレンダリング |
 
 ## 実装状態
 
 - ランタイム: Bun (TypeScript)
 - MVP Step 1-3 完了（cache 管理、fingerprint、共通スキーマ、JSON I/O、アダプタフレームワーク）
 - MVP Step 4 完了（Go アダプタ、言語別仕様体制）
-- 言語アダプタ拡充: TypeScript, Python, C#, Rust アダプタを追加。共通ユーティリティを `adapters/shared/` に切り出し。各アダプタは detect/enumerateUnits/indexUnits(files+deps)/diagnose/doctor/bootstrap + ActionAdapter を実装。シンボル/参照/型関係/呼び出しグラフは LSP 統合時に追加予定（現状は graceful degrade で空配列）。
+- 言語アダプタ拡充: TypeScript, Python, C#, Rust アダプタを追加。共通ユーティリティを `adapters/shared/` に切り出し。各アダプタは detect/enumerateUnits/indexUnits(files+deps)/diagnose/doctor/bootstrap + ActionAdapter を実装。全言語で LSP 統合済み（TypeScript: typescript-language-server、Python: pyright、C#: csharp-ls、Rust: rust-analyzer）。LSP 未インストール時は graceful degrade で空配列。
 - MVP Step 5-6 完了（skills 層: index/update/query/actions + core/diff）
 - Step 7 完了（大規模対応: JSONL ストレージ、派生索引、クエリ最適化）
 - Step 8 完了（AI Insights: loadInsightContext、query*、analyze-insights.md、query-insights.md）
+- Java アダプタ追加: unit 列挙（Maven/Gradle）、deps（import → package_prefixes マッチ）、jdtls 経由で symbols / refs / call_edges / type_relations を抽出。jdtls 未導入時は parser ベースで top-level 型のみの degrade。Action は Gradle/Maven。`JAVA_SPEC.md` 参照。
+- C++ アダプタ追加: unit 列挙（top-level source dirs）、deps（`#include "..."` → loose header の owner マッチ）、clangd 経由で symbols / refs / call_edges / type_relations を抽出。`compile_commands.json` 推奨。Action は CMake / Make。診断は cppcheck。`CPP_SPEC.md` 参照。
+- Haskell アダプタ追加: unit 列挙（`.cabal` スタンザごとに library/executable/test-suite/benchmark）、deps（import + build-depends）、HLS 経由で symbols / refs / call_edges / type_relations を抽出。HLS は GHC バージョンと厳密に紐づくため `haskell-actions/setup` を CI で利用。`HASKELL_SPEC.md` 参照。
+- Clojure アダプタ追加: unit 列挙（deps.edn / project.clj / shadow-cljs.edn / bb.edn / build.boot）、deps（`(:require ...)` の namespace 解決）、clojure-lsp 経由で symbols / refs / call_edges。clj-kondo が出力する diagnostics を取り込む。type_relations は class-based ではないため空。`CLOJURE_SPEC.md` 参照。
+- Elixir アダプタ追加: unit 列挙（mix.exs 単発 or `apps/*` の umbrella）、deps（alias/import/use/require の module → unit マッピング）、elixir-ls 経由で symbols / refs / call_edges。LSP が空配列を返す場合はパーサベースの top-level `defmodule`/`def`/`defp` 抽出にフォールバック。診断は credo。`ELIXIR_SPEC.md` 参照。
+- SARIF v2.1.0 エクスポート: `core/sarif/diagnosticsToSarif` で `Diagnostic[]` → SARIF Log を生成。tool ごとに run を分け、ruleId は `[code]` トークンから導出（無ければ tool 名）。GitHub code scanning と直接連携可能。
+- compare-facts スキル: 2 つの cacheDir を比較し、units/files/deps/symbols/diagnostics の +/- と（オプションで）影響範囲を返す。`skills/compare.ts`。
+- visualize-graph スキル: facts を Mermaid または DOT に変換。`kind: "deps"` で unit 依存、`kind: "callgraph"` で関数間呼び出し。`include`/`match`/`maxEdges` でフィルタリング・トランケーション。`skills/visualize.ts`。
 
 ## 開発メモ
 
-- メタスキル (`create-skill`, `improve-skill`) は core/ の実装作業では出番がなかった。ルート直下のスキル定義 .md を作成する Step 5 以降で初めて使う想定。実際に使ってみてテンプレート・チェックリストが重すぎないか要検証
-- Step 5-6: `applyDelta` は structuredClone で元データを保護。cascade 削除は unit→files→symbols→refs/type_relations/call_edges/diagnostics の順。`impactUnits` は file:prefix の有無を両方許容。
-- Step 5-6: skills 層は `createRegistry()` で毎回新しいレジストリを生成する設計。将来 DI に変えるなら引数に渡す形に変更する。
-- Step 5-6→修正済: Go adapter の cwd 問題を解決。ActionAdapter インターフェースに `repoRoot` を第一引数として追加。unit scope の unitId から `unit:go:` プレフィックスを除去してパスを抽出するよう修正。
-- Go adapter: `exec()` に `env` パラメータを追加し、`goList()` で GOOS/GOARCH/GOTAGS 環境変数を Bun.spawn に渡すよう修正。
-- gopls 連携: `GoplsLspClient` で `gopls serve` を1プロセス起動し JSON-RPC (stdio) で documentSymbol/callHierarchy/references/implementation を通信。`indexUnits` 1回につき1セッション。gopls 未インストール時は空配列にdegrade。
-- Step 7: JSONL は `cache/facts/` ディレクトリの有無で自動判別（ディレクトリ優先）。`readFacts` は後方互換のため JSON フォールバックを維持。インデックスは `cache/index/` に JSON で保存。
-- Step 7: `queryDefs`（name 検索）と `queryRefs` はインデックスがある場合のみ使用し、なければ既存のフルスキャンにフォールバック。
-- Step 8: InsightAdapter インターフェース（外部 AI API 呼び出し）は実装しない設計。Claude Code 自身がスキル定義（.md）を読んで分析を行う。`skills/insights.ts` はコンテキスト準備と query* のみ担当。
-- 参照解析完全化: gopls LSP `textDocument/references` を追加。型参照(type_ref)・フィールドアクセス(field_access)・一般参照(reference)を call 導出の refs に加えて収集。`findEnclosingSymbol` で参照元の関数/メソッドスコープを特定。
-- サードパーティ linter 統合: `diagnose` に staticcheck(-f json)、errcheck(-abspath)、gosec(-fmt=json)、govulncheck(-json) を統合。全てオプションで未インストール時は graceful degrade。
-- 循環依存検出: `detectCyclicDeps` で deps グラフを DFS し循環を検出。`diagnose` 内で常時実行（外部ツール不要）。
-- セキュリティ: gosec（コードレベルのセキュリティ問題）と govulncheck（依存脆弱性）を diagnostics に統合。
-- bootstrap(): LanguageAdapter インターフェースに追加。Go adapter は `go install` で gopls/staticcheck/errcheck/gosec/govulncheck/dupl を自動インストール。doctor() は不足ツールに対して bootstrap ヒントを表示。
-- デッドコード検出: `queryDeadCode()` を query-facts に追加。exported symbol × refs/call_edges のゼロ参照チェック。main/init/TestXxx/interface実装を除外。
-- コード重複検出: Go adapter の `diagnose` に `dupl -plumbing` を統合。重複ブロックを diagnostics として報告。bootstrap 対象にも追加。
-- 共通化候補: Insights スキーマに `DuplicationHint` 型を追加（extract_function/extract_interface/extract_module/parameterize）。`analyze-insights` が dupl diagnostics を手がかりにソースを分析して共通化提案を生成。`queryDuplicationHints()` で取得。
-- バレルエクスポート: ルート `index.ts` を追加。全公開 API を re-export。`package.json` の `module`/`main` フィールドと整合。
-- JSONL デフォルト化: `indexFacts`/`updateFacts` が `writeFactsJsonl` を使用するよう変更。`readFacts` は引き続き JSON/JSONL 両方を自動判別。
-- クエリキャッシュ: `skills/query.ts` に in-process facts キャッシュを追加（30秒 TTL）。同一セッション内での重複ディスク読み込みを回避。`clearFactsCache()` でリセット可能。
-- JSONL 分割読み: `readFactsPartial(cacheDir, fields)` で必要なフィールドだけ読み込み可能。各クエリ関数は必要最小限のフィールドのみロード（例: `queryDeps` → deps のみ、`queryCallers` → call_edges のみ）。キャッシュはフィールド単位で増分マージ。
-- テスト堅牢化: gopls 依存テストに `skipIf(!hasGopls)` を追加。gopls 未インストール環境でも全テストが skip/pass する。
+### 設計判断
+
+- InsightAdapter（外部 AI API 呼び出し）は実装しない設計。Claude Code 自身がスキル定義（.md）を読んで分析を行う。`skills/insights.ts` はコンテキスト準備と query* のみ担当。
+- skills 層は `createRegistry()` で毎回新しいレジストリを生成する設計。将来 DI に変えるなら引数に渡す形に変更する。
+- JSONL 一本化済み。legacy JSON（`facts.json` 単一ファイル）サポートは完全削除。`readFacts` は `readFactsPartial(cacheDir, ALL_FIELDS)` の薄いラッパー。
+
+### LSP 座標規約
+
+- facts 出力の全 position フィールド（`decl.position`、`site.position` 等）は **1-based** (line, column ともに 1 始まり) で統一する。LSP プロトコルは 0-based を返すため、各言語アダプタで `+1` 変換が必要。
+- 座標変換は `decl.position` と `site.position`（refs/call_edges）の **両方** に適用すること。片方だけ修正すると横断クエリで不整合が起きる。
+- 共通ユーティリティ（`adapters/shared/lsp-client.ts` の `SYMBOL_KIND_MAP` 等）は LSP 仕様 (SymbolKind enum) と照合して検証すること。
+
+### Go アダプタ
+
+- gopls 連携: `GoplsLspClient` で `gopls serve` を1プロセス起動し JSON-RPC (stdio) で documentSymbol/callHierarchy/references/implementation を通信。gopls 未インストール時は空配列に degrade。
+- 参照解析: gopls `textDocument/references` で型参照(type_ref)・フィールドアクセス(field_access)・一般参照(reference)を収集。`findEnclosingSymbol` で参照元スコープを特定。
+- linter 統合: staticcheck(-f json)、errcheck(-abspath)、gosec(-fmt=json)、govulncheck(-json)、dupl(-plumbing) を `diagnose` に統合。全てオプション。
+- gopls 内蔵アナライザ統合: `LspClient.pullDiagnostics` で `textDocument/diagnostic` (LSP 3.17 pull-mode) を発行し、modernize/inline/rangeint/stringsbuilder 等の hint を `diagnose` に取り込む。tool 名は `gopls/<analyzer>` 形式（`source` 由来）。CLI 系統合では拾えない hint を補うのが目的。`externalClient` がある場合は再利用、無ければ独立した `GoplsLspClient` を起動して fin で shutdown。pull モードはファイル毎に `didOpen` → pull → `didClose` する必要あり（gopls は didOpen 済みファイルにしか診断を返さない）。
+- 循環依存検出: `detectCyclicDeps` で deps グラフを DFS し循環を検出（外部ツール不要）。
+
+### ストレージ・クエリ最適化
+
+- JSONL 分割読み: `readFactsPartial(cacheDir, fields)` で必要なフィールドだけ読み込み。キャッシュはフィールド単位で増分マージ。
+- クエリキャッシュ: `skills/query.ts` に in-process facts キャッシュ（30秒 TTL）。`clearFactsCache()` でリセット可能。`skills/index.ts` と `skills/update.ts` は `writeFactsJsonl` 直後に自動で `clearFactsCache()` を呼ぶ。
+- 書き込み中断耐性: `writeFactsJsonl` で `write_complete` マーカーを meta.json に導入。
+- `queryDefs`/`queryRefs` はインデックスがある場合のみ使用し、なければフルスキャンにフォールバック。
+- `queryImpact` は deps の逆引き（rdeps）+ type_relations + call_edges を辿って推移的に影響 unit を展開する（SPEC.md §9.2 準拠）。
+
+### 差分更新・diff
+
+- `applyDelta` は structuredClone で元データを保護。cascade 削除は unit→files→symbols→refs/type_relations/call_edges/diagnostics の順。
+- `impactUnits` は file:prefix の有無を両方許容。
+- `FactsDelta.removed.refs` と `removed.call_edges` は `site` フィールドで一意特定。
+
+### その他
+
+- デッドコード検出: receiver 型のマッチングは `(unit_id, name)` ペアの Map ベース検索（同名型の誤判定防止）。
+- `diagnose()` に `deps?: Dep[]` オプション引数を追加し、`goList` 二重実行を回避。
+- メタスキル (`create-skill`, `improve-skill`) は core/ 実装時は不使用。スキル定義 .md 作成時に使用。
+- TypeScript linter フック（tsc）は未使用 import・未使用変数・未使用関数を検出してコミットをブロックする。実装時は import 追加・削除のたびに使用箇所の有無を確認すること。
+- `storage.ts` と `query.ts` の間には循環依存がある。`writeFactsJsonl` 後に `clearFactsCache` を呼ぶ場合は動的 import（`await import('./query.ts')`）で回避すること。

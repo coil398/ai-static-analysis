@@ -8,7 +8,7 @@ export interface ExecResult {
 
 export async function exec(
   cmd: string[],
-  opts?: { cwd?: string; env?: Record<string, string> },
+  opts?: { cwd?: string; env?: Record<string, string>; timeoutMs?: number },
 ): Promise<ExecResult> {
   const proc = Bun.spawn(cmd, {
     cwd: opts?.cwd,
@@ -16,6 +16,14 @@ export async function exec(
     stdout: "pipe",
     stderr: "pipe",
   });
+
+  if (opts?.timeoutMs) {
+    const timeout = opts.timeoutMs;
+    setTimeout(() => {
+      try { proc.kill(); } catch {}
+    }, timeout);
+  }
+
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -63,6 +71,30 @@ export async function isGenerated(path: string): Promise<boolean> {
   } finally {
     reader.releaseLock();
   }
+}
+
+/**
+ * Run async fn over items with bounded concurrency. Preserves output order.
+ * Used for parallelizing LSP requests against a single gopls process to keep
+ * indexing time linear in number of cores instead of total request count.
+ */
+export async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const workerCount = Math.max(1, Math.min(limit, items.length));
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i] as T, i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 export function hashSig(input: string): string {

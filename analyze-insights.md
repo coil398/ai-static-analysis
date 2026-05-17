@@ -119,9 +119,84 @@ import { writeInsights } from "./core/storage/index.ts";
 await writeInsights("<CACHE_DIR>", insights);
 ```
 
+### スコープと自動分割
+
+スコープ未指定（全体分析）の場合、コンテキストサイズが大きくなりすぎる。以下の手順で自動分割する:
+
+1. `ctx.facts.units` を取得し、自動生成コードの unit（unit 内の全ファイルが `generated: true`）を除外
+2. 残った units を 1 unit ずつ処理する
+3. 各 unit について:
+   a. `loadInsightContext` に `scope: { unit_ids: [unitId] }` を渡してコンテキストを取得
+   b. そのコンテキストに対して分析を実施
+   c. 結果を蓄積
+4. 全 unit の結果を結合して `cache/insights.json` に保存する
+
+```typescript
+import { loadInsightContext } from "./skills/insights.ts";
+import { readFacts, writeInsights } from "./core/storage/index.ts";
+
+// 全 unit を取得し、全ファイルが generated の unit を除外
+const allFacts = await readFacts(cacheDir);
+const targetUnits = allFacts.units.filter((unit) => {
+  const unitFiles = allFacts.files.filter((f) => f.unit_id === unit.id);
+  // ファイルが存在し、かつ全てが generated な unit はスキップ
+  return unitFiles.length === 0 || !unitFiles.every((f) => f.generated);
+});
+
+// unit ごとに分析を実施して結果を蓄積
+const allInsights = { intent_tags: [], summaries: [], bug_smells: [], pattern_tags: [], naming_issues: [], duplication_hints: [] };
+for (const unit of targetUnits) {
+  const ctx = await loadInsightContext({
+    repoRoot: "<REPO_ROOT>",
+    cacheDir: "<CACHE_DIR>",
+    scope: { unit_ids: [unit.id] },
+  });
+  // 各 unit に対して分析を実施し、結果を allInsights に追記
+  // ...
+}
+
+// 結合した結果を保存
+await writeInsights("<CACHE_DIR>", { schema_version: 1, snapshot: allFacts.snapshot, ...allInsights });
+```
+
+### 巨大 unit の分割戦略
+
+1 unit が非常に大きい場合（ファイル数が多い、あるいは単一ファイルが巨大）、`loadInsightContext` の結果がコンテキストウィンドウに収まらない可能性がある。その場合は以下の手順でファイル単位に分割する:
+
+```typescript
+const ctx = await loadInsightContext({
+  repoRoot: "<REPO_ROOT>",
+  cacheDir: "<CACHE_DIR>",
+  scope: { unit_ids: [unitId] },
+});
+
+// ソースコードの合計文字数をチェック（目安: 100,000文字以上なら分割）
+const totalChars = Object.values(ctx.sources).reduce((sum, s) => sum + s.length, 0);
+const SPLIT_THRESHOLD = 100_000;
+
+if (totalChars > SPLIT_THRESHOLD) {
+  // ファイル単位で分割して分析
+  const fileIds = Object.keys(ctx.sources);
+  for (const fileId of fileIds) {
+    const fileCtx = await loadInsightContext({
+      repoRoot: "<REPO_ROOT>",
+      cacheDir: "<CACHE_DIR>",
+      scope: { file_ids: [fileId] },
+    });
+    // この fileCtx に対して分析を実施し、結果を蓄積
+  }
+} else {
+  // 通常の unit 単位分析
+}
+```
+
+分割時の注意:
+- ファイル単位の分析では cross-file の重複検出（duplication_hints）の精度が下がるため、unit 内の全ファイル名リストを分析プロンプトに含めてヒントとする
+- 分割しても各ファイルの symbols/deps 情報は `ctx.facts` から取得可能なので、コンテキストに含める
+
 ## 注意事項
 
-- **決定論的 facts と混在させない**：`cache/insights.json` は `cache/facts.json` とは別ファイル。
+- **決定論的 facts と混在させない**：`cache/insights.json` は `cache/facts/`（JSONL）とは別ファイル。
 - **信頼度の正直な表現**：確信が持てない場合は `confidence` を低め（0.3〜0.5）に設定する。
 - **スコープ外の分析は行わない**：`ctx.sources` に含まれないファイルの内容を推測しない。
 - **バグ臭の誤検知に注意**：`high` severity は「かなり確実」な場合のみ使用する。

@@ -3,7 +3,7 @@ import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Facts, Insights } from "../core/schema/types.ts";
-import { writeFacts, writeInsights } from "../core/storage/index.ts";
+import { writeFactsJsonl, writeInsights } from "../core/storage/index.ts";
 import {
   loadInsightContext,
   queryIntents,
@@ -134,7 +134,7 @@ describe("loadInsightContext", () => {
     const cacheDir = join(tempDir, "cache");
     await mkdir(repoRoot, { recursive: true });
     await writeFile(join(repoRoot, "main.go"), "package main\n");
-    await writeFacts(cacheDir, sampleFacts);
+    await writeFactsJsonl(cacheDir, sampleFacts);
 
     const ctx = await loadInsightContext({ repoRoot, cacheDir });
     expect(ctx.facts.units).toHaveLength(1);
@@ -159,7 +159,7 @@ describe("loadInsightContext", () => {
         { id: "file:pkg/lib.go", path: "pkg/lib.go", unit_id: "unit:go:pkg", hash: "h2", generated: false },
       ],
     };
-    await writeFacts(cacheDir, factsWithExtra);
+    await writeFactsJsonl(cacheDir, factsWithExtra);
 
     const ctx = await loadInsightContext({
       repoRoot,

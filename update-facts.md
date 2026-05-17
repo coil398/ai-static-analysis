@@ -74,7 +74,7 @@ const result = await updateFacts({
    - 不一致の場合は `indexFacts()` にフォールバック
 
 2. **既存 Facts の読み込み**
-   - `readFacts()` で `cache/facts.json` を読み込む
+   - `readFacts()` で `cache/facts/` (JSONL) を読み込む
    - 不在の場合は `indexFacts()` にフォールバック
 
 3. **影響 Unit の特定**
@@ -96,7 +96,7 @@ const result = await updateFacts({
 ### エラーハンドリング
 
 - Fingerprint 不一致: `indexFacts()` にフォールバック（自動）
-- `cache/facts.json` 不在: `indexFacts()` にフォールバック
+- `cache/facts/` 不在（JSONL データなし）: `indexFacts()` にフォールバック
 - 一部 unit の解析失敗: errors に記録し、他は継続
 
 ## 使用例

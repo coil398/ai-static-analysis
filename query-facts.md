@@ -39,6 +39,7 @@ const opts = { repoRoot: "/path/to/repo", cacheDir: "/path/to/cache" };
 |---|---|---|---|
 | `repoRoot` | `string` | Yes | リポジトリルートパス |
 | `cacheDir` | `string` | No | キャッシュディレクトリ（default: `<repoRoot>/cache`） |
+| `maxDepth` | `number` | No | `queryImpact` の推移的展開の最大深さ（default: 無制限） |
 
 ### クエリ関数一覧
 
@@ -145,6 +146,26 @@ for (const { symbol } of deadSymbols) {
 
 除外対象: `main`, `init`, `TestXxx`/`BenchmarkXxx`/`ExampleXxx`（Go テストエントリポイント）、interface 実装型。
 
+### SARIF エクスポート
+
+`queryDiagnostics` の結果を SARIF v2.1.0 形式に変換し、GitHub code scanning などの外部システムに取り込める。
+
+```typescript
+import { queryDiagnostics } from "./skills/query.ts";
+import { diagnosticsToSarif } from "./core/sarif/index.ts";
+
+const { diagnostics } = await queryDiagnostics("repo", opts);
+const sarif = diagnosticsToSarif(diagnostics, {
+  informationUri: "https://github.com/example/repo",
+});
+await Bun.write("diagnostics.sarif", JSON.stringify(sarif, null, 2));
+```
+
+- 各 `tool`（例: `gopls/stringsbuilder`, `staticcheck`）ごとに 1 つの SARIF run を生成
+- severity マッピング: `error → error`, `warning → warning`, `info/hint → note`
+- `file_id`（`file:` プレフィックス付）はリポジトリ相対 URI に変換
+- `ruleId` は末尾の `[code]` トークン（例: `[SA1019]`）から導出。なければ tool 名
+
 ## 依存
 
 - `core/storage`: facts の読み込み
@@ -159,10 +180,10 @@ for (const { symbol } of deadSymbols) {
 
 ### 処理
 
-各関数は `readFacts()` → メモリ上でフィルタ。MVP では派生インデックス不要。
+各関数は `loadFactsFields()` で必要なフィールドのみ JSONL から読み込み、メモリ上でフィルタする。30秒 TTL の in-process キャッシュにより、同一セッション内の連続クエリは高速。`queryDefs` は `symbol_by_name` インデックス、`queryRefs` は `refs_by_symbol` インデックスを利用し、フルスキャンを回避する（インデックス未生成時はフォールバック）。
 
 ### エラーハンドリング
 
-- `cache/facts.json` 不在: `"No cached facts found. Run index-facts first."` をスロー
+- `cache/facts/` 不在（JSONL データなし）: `"No cached facts found. Run index-facts first."` をスロー
 - 不正な unit_id/symbol_id: 空リストを返却
 

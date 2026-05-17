@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import type { Facts, Fingerprint } from "../schema/index.ts";
 import {
   readFacts,
-  writeFacts,
+  writeFactsJsonl,
   readFingerprint,
   writeFingerprint,
 } from "./storage.ts";
@@ -38,17 +38,17 @@ describe("storage", () => {
     created_at: "2026-02-15T00:00:00Z",
   };
 
-  test("readFacts returns null for missing file", async () => {
+  test("readFacts returns null for missing dir", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "storage-test-"));
     const result = await readFacts(tempDir);
     expect(result).toBeNull();
   });
 
-  test("writeFacts + readFacts round-trip", async () => {
+  test("writeFactsJsonl + readFacts round-trip", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "storage-test-"));
     const cacheDir = join(tempDir, "cache");
 
-    await writeFacts(cacheDir, sampleFacts);
+    await writeFactsJsonl(cacheDir, sampleFacts);
     const result = await readFacts(cacheDir);
 
     expect(result).toEqual(sampleFacts);

@@ -77,4 +77,26 @@ describe("indexFacts", () => {
     expect(result.ok).toBe(true);
     expect(result.facts.units.length).toBeGreaterThan(0);
   }, 60_000);
+
+  test("onProgress callback is called for each phase", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "index-test-"));
+    const cacheDir = join(tempDir, "cache");
+
+    const messages: string[] = [];
+    const result = await indexFacts({
+      repoRoot: TESTDATA,
+      cacheDir,
+      onProgress: (msg) => messages.push(msg),
+    });
+
+    expect(result.ok).toBe(true);
+    // 7フェーズ分のメッセージが出力されること
+    expect(messages.some((m) => m.includes("[1/7]"))).toBe(true);
+    expect(messages.some((m) => m.includes("[2/7]"))).toBe(true);
+    expect(messages.some((m) => m.includes("[3/7]"))).toBe(true);
+    expect(messages.some((m) => m.includes("[4/7]"))).toBe(true);
+    expect(messages.some((m) => m.includes("[5/7]"))).toBe(true);
+    expect(messages.some((m) => m.includes("[6/7]"))).toBe(true);
+    expect(messages.some((m) => m.includes("[7/7]"))).toBe(true);
+  }, 30_000);
 });

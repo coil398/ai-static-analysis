@@ -1,7 +1,6 @@
 export {
   readFacts,
   readFactsPartial,
-  writeFacts,
   writeFactsJsonl,
   readFingerprint,
   writeFingerprint,

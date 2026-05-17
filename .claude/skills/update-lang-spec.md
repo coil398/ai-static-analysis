@@ -22,10 +22,16 @@
 - [ ] Diagnostics のパース仕様
 - [ ] ActionAdapter のコマンド定義
 - [ ] Fingerprint の build_profile キー
+- [ ] LSP 統合状況（対応ツール、座標変換 0-based→1-based、degrade 方針）
 - [ ] MVP スコープと degrade 方針
 - [ ] テスト方針
 
 ## 命名規約
 
-- ファイル名: `<LANG>_SPEC.md`（大文字、例: `GO_SPEC.md`, `TS_SPEC.md`, `PY_SPEC.md`）
+- ファイル名: `<LANG>_SPEC.md`（大文字、略称不可。例: `GO_SPEC.md`, `TS_SPEC.md`, `PYTHON_SPEC.md`, `CSHARP_SPEC.md`）
 - SPEC.md §8.4 のエントリ形式: `- \`<LANG>_SPEC.md\` — <Lang> アダプタ仕様`
+
+## 関連スキル
+
+- `create-skill`: 新しい言語アダプタのスキル定義を作成する際に使用
+- `improve-skill`: 既存の言語アダプタのスキル定義を改善する際に使用
