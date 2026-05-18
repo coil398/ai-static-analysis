@@ -375,6 +375,9 @@ Claude Code 自身がスキル定義（analyze-insights.md）を読んで分析�
 - `callers(symbol_id)`：指定した関数を呼び出している関数の一覧（call_edges の逆引き）
 - `callees(symbol_id)`：指定した関数から呼び出されている関数の一覧
 - `impact(changed_files)`：影響unit/symbol候補を返す（type_relations + call_edges を辿って推移的に展開）
+- `deadCode(scope?)`：参照されていないシンボル候補を返す（refs / call_edges の逆引きが空のもの。LSP 未導入時はシンボルレベル検出不可）
+
+`diagnostics` の出力は `core/sarif/diagnosticsToSarif` で SARIF v2.1.0 にエクスポートできる（GitHub code scanning 連携）。
 
 ### 9.3 Insight（SHOULD — AI非決定論解析）
 **`analyze(scope?)`**：
@@ -396,6 +399,14 @@ Claude Code 自身がスキル定義（analyze-insights.md）を読んで分析�
 - `run_format(scope, profile)`
 - `run_check(scope, profile)`
 - `run_test(scope, profile)`
+
+### 9.5 Compare / Visualize（SHOULD）
+
+**`compare(baseCacheDir, headCacheDir, options?)`**（`skills/compare.ts`）：
+2 スナップショット間で facts を diff し、units / files / deps / symbols / diagnostics の追加・削除と（オプションで）影響範囲を返す。
+
+**`visualize(cacheDir, options)`**（`skills/visualize.ts`）：
+facts を Mermaid または DOT に変換する。`kind: "deps"` で unit 依存グラフ、`kind: "callgraph"` で関数間呼び出しグラフ。`include` / `match` / `maxEdges` でフィルタリング・トランケーション可能。
 
 ---
 

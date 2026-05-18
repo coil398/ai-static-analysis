@@ -115,10 +115,10 @@ query-facts で diagnostics を取得してください
 
 ```
 ai-static-analysis/
-├── core/           # 共通コア（スキーマ、fingerprint、dispatcher、ストレージ I/O、差分更新）
-├── adapters/       # 言語別アダプタ（Go, TypeScript, Python, C#, Rust）
+├── core/           # 共通コア（スキーマ、fingerprint、dispatcher、ストレージ I/O、差分更新、SARIF）
+├── adapters/       # 言語別アダプタ（Go, TypeScript, Python, C#, Rust, Java, C++, Haskell, Clojure, Elixir）
 │   └── shared/     # 共通ユーティリティ
-├── skills/         # AI 操作単位の実装（index/update/query/actions/insights）
+├── skills/         # AI 操作単位の実装（index/update/query/actions/insights/compare/visualize）
 ├── scripts/        # フック用スクリプト（SessionStart チェック等）
 ├── templates/      # 対象プロジェクト用テンプレート
 ├── cache/          # 生成物（Git 管理外、安全に全削除可能）

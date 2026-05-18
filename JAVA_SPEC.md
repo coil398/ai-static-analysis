@@ -11,7 +11,7 @@
 | `javac` / `java` (JDK 17+) | ランタイム | MUST |
 | `mvn` | Maven ビルド・テスト | MAY |
 | `gradle` | Gradle ビルド・テスト | MAY |
-| `jdtls` (Eclipse JDT LSP) | symbols/refs/call_edges（将来の拡張） | MAY |
+| `jdtls` (Eclipse JDT LSP) | symbols / refs / call_edges / type_relations | MAY |
 | `checkstyle` | スタイルチェック（diagnostics） | MAY |
 | `spotbugs` | バグパターン検出 | MAY |
 | `pmd` | 静的解析 | MAY |

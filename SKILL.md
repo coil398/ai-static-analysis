@@ -100,13 +100,23 @@ facts を使うクエリの前に、以下を確認する:
 
 | 言語 | unit 列挙 | 依存解析 | シンボル定義 | 参照・呼出 | 型関係 | diagnostics | format/check/test |
 |---|---|---|---|---|---|---|---|
-| **Go** | ✅ | ✅ | ✅ (gopls) | ✅ (gopls) | ✅ (gopls) | ✅ (staticcheck等) | ✅ |
+| **Go** | ✅ | ✅ | ✅ (gopls) | ✅ (gopls) | ✅ (gopls) | ✅ (gopls 内蔵アナライザ + staticcheck等) | ✅ |
 | **TypeScript** | ✅ | ✅ | ✅ (typescript-language-server) | ✅ (typescript-language-server) | ✅ (typescript-language-server) | ✅ (tsc) | ✅ |
 | **Python** | ✅ | ✅ | ✅ (pyright) | ✅ (pyright) | ✅* | ✅ | ✅ |
 | **C#** | ✅ | ✅ | ✅ (csharp-ls) | ✅ (csharp-ls) | ✅ (csharp-ls) | ✅ | ✅ |
 | **Rust** | ✅ | ✅ | ✅ (rust-analyzer) | ✅ (rust-analyzer) | ✅ (rust-analyzer) | ✅ | ✅ |
+| **Java** | ✅ | ✅ | ✅ (jdtls) | ✅ (jdtls) | ✅ (jdtls) | ✅ (checkstyle) | ✅ (Gradle/Maven) |
+| **C++** | ✅ | ✅ (#include) | ✅ (clangd) | ✅ (clangd) | ✅ (clangd) | ✅ (cppcheck) | ✅ (CMake/Make) |
+| **Haskell** | ✅ (cabal) | ✅ (import + build-depends) | ✅ (HLS) | ✅ (HLS) | ✅ (HLS) | ✅ (hlint) | ✅ (cabal/stack) |
+| **Clojure** | ✅ (deps.edn/project.clj) | ✅ (require) | ✅ (clojure-lsp) | ✅ (clojure-lsp) | ❌‡ | ✅ (clj-kondo) | ✅ (clj/lein) |
+| **Elixir** | ✅ (mix.exs/umbrella) | ✅ (alias/import/use) | ✅ (elixir-ls) | ✅ (elixir-ls) | ❌§ | ✅ (credo) | ✅ (mix) |
 
-> \* Python の型関係は pyright が `textDocument/implementation` を未サポートのため、ソースコードのパターンマッチによる直接継承の検出のみ対応。
+> \* Python の型関係は pyright が `textDocument/implementation` を未サポートのため、`ast` モジュール（`adapters/python/extract_bases.py`）によるクラス継承の検出で対応。
+>
+> ‡ Clojure は class-based ではないため型関係は出力しない。
+>
+> § Elixir は dynamic で型階層がないため type_relations は出力しない。
+>
 > 各言語とも LSP サーバーが未インストールの場合は空配列に graceful degrade する。
 
 ## 前提
@@ -137,7 +147,14 @@ facts を使うクエリの前に、以下を確認する:
 
 | コマンド | 説明 |
 |---|---|
-| `query-facts` | 依存関係・定義・参照・診断・影響範囲・デッドコード等をクエリ |
+| `query-facts` | 依存関係・定義・参照・診断・影響範囲・デッドコード等をクエリ（SARIF v2.1.0 エクスポート対応） |
+
+### 比較・可視化
+
+| コマンド | 説明 |
+|---|---|
+| `compare-facts` | 2 つの facts スナップショットを diff（追加/削除された unit・file・symbol・diagnostic、影響範囲） |
+| `visualize-graph` | deps / call_edges を Mermaid または DOT グラフとして出力 |
 
 ### アクション（コード検証）
 
@@ -196,6 +213,8 @@ query-insights でバグ臭を取得してください
 - [`index-facts.md`](index-facts.md)
 - [`update-facts.md`](update-facts.md)
 - [`query-facts.md`](query-facts.md)
+- [`compare-facts.md`](compare-facts.md)
+- [`visualize-graph.md`](visualize-graph.md)
 - [`run-actions.md`](run-actions.md)
 - [`analyze-insights.md`](analyze-insights.md)
 - [`query-insights.md`](query-insights.md)
