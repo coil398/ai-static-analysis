@@ -172,7 +172,8 @@ callee[N]: ranges <line>:<col>-<endCol> in <file> from/to function <name> in <fi
 - 各 function/method シンボルに対して実行
 - callee の定義位置から symbolByPos を逆引きして callee の Symbol ID を解決
 - リポ内 unit に属さない callee（stdlib 等）はスキップ
-- `dispatch`: 現在は全て `"static"`（将来 interface dispatch の判定を追加予定）
+- `dispatch`: インターフェースメソッド呼び出しの場合は `"interface"`、それ以外は `"static"`。判定は phase 1 で収集した `interfaceSymbols`（kind: "interface"）の name と callee シンボルの `metadata.receiver` を照合して行う
+  - **既知の制限**: `dispatch: "interface"` の判定は、gopls の `callHierarchy/outgoingCalls` が callee として **interface method の宣言位置**（例: `Greeter.Greet`）を返す場合にのみ機能する。gopls がコンテキスト（呼び出しサイトの具体的な型情報など）に基づいて **concrete 実装**（例: `(*ConsoleGreeter).Greet`）を callee として返す場合、`metadata.receiver` は interface 名ではなく concrete 型名になるため `dispatch: "static"` となる。この挙動は gopls の内部解決ポリシーに依存しており、呼び出しサイトの変数宣言型が interface 型であっても `"static"` に分類される場合がある（例: `var x MyInterface = &Concrete{}` で `x.Method()` を呼ぶケース）。
 - 各 call_edge から `kind: "call"`, `confidence: "certain"` の Ref も同時生成
 
 ### 10.3 type_relations: `gopls implementation <file>:<line>:<col>`

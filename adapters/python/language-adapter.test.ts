@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { resolve } from "node:path";
 import { PythonLanguageAdapter } from "./language-adapter.ts";
-import { exec } from "../shared/index.ts";
+import { exec, LspClient } from "../shared/index.ts";
 
 const TESTDATA = resolve(import.meta.dir, "testdata");
 
@@ -225,4 +225,41 @@ describe("PythonLanguageAdapter", () => {
     ];
     expect(all).toContain("pyright");
   }, 120_000);
+
+  test("setExternalLspClient allows injecting an external client", async () => {
+    const adapterWithClient = new PythonLanguageAdapter();
+    // null を設定してデフォルト動作に戻せること
+    adapterWithClient.setExternalLspClient(null);
+    expect(adapterWithClient["externalClient"]).toBeNull();
+  });
+
+  test.skipIf(!hasPyright)("setExternalLspClient uses provided client without shutdown", async () => {
+    const adapterWithClient = new PythonLanguageAdapter();
+    // pyright-langserver または basedpyright-langserver を使う
+    // isPyrightAvailable() と同じロジック: exitCode === 0 または stderr に "Connection input stream" を含む
+    const pyrightCmd = await (async () => {
+      for (const cmd of ["pyright-langserver", "basedpyright-langserver"]) {
+        const r = await exec([cmd, "--version"]).catch(() => null);
+        if (!r) continue;
+        if (r.exitCode === 0) return cmd;
+        if (r.stderr.includes("Connection input stream")) return cmd;
+      }
+      return "pyright-langserver"; // fallback (hasPyright=true なので到達しないはず)
+    })();
+    const externalClient = new LspClient([pyrightCmd, "--stdio"], TESTDATA);
+    adapterWithClient.setExternalLspClient(externalClient);
+
+    try {
+      const units = await adapterWithClient.enumerateUnits(TESTDATA, {});
+      const delta = await adapterWithClient.indexUnits(units, {});
+      // 外部クライアントを使っても正常に解析できること
+      expect(delta.added.files?.length).toBeGreaterThan(0);
+      if (hasPyright) {
+        expect(delta.added.symbols?.length).toBeGreaterThan(0);
+      }
+    } finally {
+      // 外部クライアントを手動で shutdown する
+      await externalClient.shutdown();
+    }
+  }, 60_000);
 });

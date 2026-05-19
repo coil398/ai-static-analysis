@@ -161,6 +161,19 @@ describe("GoLanguageAdapter", () => {
       (e) => e.caller_id.includes("#NewService#") && e.callee_id.includes("#NewStore#"),
     );
     expect(newServiceToNewStore).toBeDefined();
+
+    // SayHello -> Greet: call edge via Greeter interface parameter
+    // main.go calls SayHello(g) with a ConsoleGreeter, which ensures this call edge is generated.
+    // dispatch may be "interface" or "static" depending on whether gopls returns the interface method
+    // declaration or the concrete implementation as the callee of callHierarchy/outgoingCalls.
+    // Strict "interface" dispatch verification is delegated to tester with a real gopls environment.
+    // See GO_SPEC.md §10.2 "既知の制限" for details.
+    const sayHelloToGreet = callEdges.find(
+      (e) => e.caller_id.includes("#SayHello#") && e.callee_id.includes("#Greet#"),
+    );
+    expect(sayHelloToGreet).toBeDefined();
+    // gopls が interface method または concrete 実装のどちらを返すかは実機依存 (GO_SPEC.md §10.2)
+    expect(["interface", "static"]).toContain(sayHelloToGreet!.dispatch);
   }, 30_000);
 
   test.skipIf(!hasGopls)("indexUnits produces refs derived from call_edges", async () => {

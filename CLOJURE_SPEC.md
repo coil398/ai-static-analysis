@@ -83,7 +83,7 @@ Unit {
 | `call_edges` | 同上、`dispatch: "dynamic"`（Clojure は動的ディスパッチ） |
 | `refs`（reference） | `references` を var/function/constant に発行 |
 
-`type_relations` は出力しない（Clojure は class-based ではないため）。protocols / multimethods への対応は将来検討。
+`type_relations`: パーサベースで `defprotocol` / `defrecord` / `deftype` を解析し、inline protocol 実装（`defrecord Name [] Protocol (method ...)`）を `kind: "implements"` の TypeRelation として生成する。`parseProtocolRelations` 関数で実装。LSP が type_relations を返さない場合も含め、常にマージされる。protocol symbol は `kind: "interface"`、record/type symbol は `kind: "class"` として Symbol にも追加される。
 
 ---
 

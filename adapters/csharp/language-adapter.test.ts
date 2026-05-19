@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeAll } from "bun:test";
 import { resolve } from "node:path";
 import { CSharpLanguageAdapter } from "./language-adapter.ts";
-import { exec, whichTool } from "../shared/index.ts";
+import { exec, whichTool, LspClient } from "../shared/index.ts";
 import type { FactsDelta } from "../../core/schema/types.ts";
 
 const TESTDATA = resolve(import.meta.dir, "testdata");
@@ -184,4 +184,34 @@ describe.skipIf(!hasLsp)("CSharpLanguageAdapter LSP integration", () => {
     const greetSym = symbols.find((s) => s.name.startsWith("Greet"));
     expect(greetSym).toBeDefined();
   });
+
+  test("setExternalLspClient allows injecting an external client", async () => {
+    const adapterWithClient = new CSharpLanguageAdapter();
+    // null を設定してデフォルト動作に戻せること
+    adapterWithClient.setExternalLspClient(null);
+    expect(adapterWithClient["externalClient"]).toBeNull();
+  });
+
+  test.skipIf(!hasCsharpLs)("setExternalLspClient uses provided client without shutdown", async () => {
+    const adapterWithClient = new CSharpLanguageAdapter();
+    // 外部クライアントは buildDotnetEnv() 相当の環境変数を設定済みで注入する
+    const externalClient = new LspClient(["csharp-ls"], TESTDATA, undefined, {
+      DOTNET_ROOT: dotnetRoot,
+      PATH: `${dotnetRoot}:${dotnetRoot}/tools:${process.env["PATH"] ?? ""}`,
+    }, { handleServerRequests: true });
+    adapterWithClient.setExternalLspClient(externalClient);
+
+    try {
+      const units = await adapterWithClient.enumerateUnits(TESTDATA, {});
+      const delta2 = await adapterWithClient.indexUnits(units, {});
+      // 外部クライアントを使っても正常に解析できること
+      expect(delta2.added.files?.length).toBeGreaterThan(0);
+      if (hasCsharpLs) {
+        expect(delta2.added.symbols?.length).toBeGreaterThan(0);
+      }
+    } finally {
+      // 外部クライアントを手動で shutdown する
+      try { await externalClient.shutdown(); } catch { /* ignore */ }
+    }
+  }, 120_000);
 });

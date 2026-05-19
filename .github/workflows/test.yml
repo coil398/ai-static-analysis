@@ -13,7 +13,7 @@ jobs:
     # clangd, pyright, csharp-ls, rust-analyzer and typescript-language-server
     # in sequence. Each LSP boot can add a minute. 60 minutes gives the runs
     # headroom even when caches are cold.
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
@@ -138,5 +138,13 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Run tests
-        run: bun test
+      - name: Run tests with coverage
+        run: bun test --coverage --coverage-reporter=lcov
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          retention-days: 14

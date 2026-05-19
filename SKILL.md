@@ -105,17 +105,17 @@ facts を使うクエリの前に、以下を確認する:
 | **Python** | ✅ | ✅ | ✅ (pyright) | ✅ (pyright) | ✅* | ✅ | ✅ |
 | **C#** | ✅ | ✅ | ✅ (csharp-ls) | ✅ (csharp-ls) | ✅ (csharp-ls) | ✅ | ✅ |
 | **Rust** | ✅ | ✅ | ✅ (rust-analyzer) | ✅ (rust-analyzer) | ✅ (rust-analyzer) | ✅ | ✅ |
-| **Java** | ✅ | ✅ | ✅ (jdtls) | ✅ (jdtls) | ✅ (jdtls) | ✅ (checkstyle) | ✅ (Gradle/Maven) |
-| **C++** | ✅ | ✅ (#include) | ✅ (clangd) | ✅ (clangd) | ✅ (clangd) | ✅ (cppcheck) | ✅ (CMake/Make) |
+| **Java** | ✅ | ✅ | ✅ (jdtls) | ✅ (jdtls) | ✅ (jdtls) | ✅ (checkstyle + pmd) | ✅ (Gradle/Maven) |
+| **C++** | ✅ | ✅ (#include) | ✅ (clangd) | ✅ (clangd) | ✅ (clangd) | ✅ (cppcheck + clang-tidy) | ✅ (CMake/Make) |
 | **Haskell** | ✅ (cabal) | ✅ (import + build-depends) | ✅ (HLS) | ✅ (HLS) | ✅ (HLS) | ✅ (hlint) | ✅ (cabal/stack) |
-| **Clojure** | ✅ (deps.edn/project.clj) | ✅ (require) | ✅ (clojure-lsp) | ✅ (clojure-lsp) | ❌‡ | ✅ (clj-kondo) | ✅ (clj/lein) |
-| **Elixir** | ✅ (mix.exs/umbrella) | ✅ (alias/import/use) | ✅ (elixir-ls) | ✅ (elixir-ls) | ❌§ | ✅ (credo) | ✅ (mix) |
+| **Clojure** | ✅ (deps.edn/project.clj) | ✅ (require) | ✅ (clojure-lsp) | ✅ (clojure-lsp) | ✅ (parser)‡ | ✅ (clj-kondo) | ✅ (clj/lein) |
+| **Elixir** | ✅ (mix.exs/umbrella) | ✅ (alias/import/use) | ✅ (elixir-ls) | ✅ (elixir-ls) | ✅ (parser)§ | ✅ (credo) | ✅ (mix) |
 
 > \* Python の型関係は pyright が `textDocument/implementation` を未サポートのため、`ast` モジュール（`adapters/python/extract_bases.py`）によるクラス継承の検出で対応。
 >
-> ‡ Clojure は class-based ではないため型関係は出力しない。
+> ‡ Clojure の型関係はパーサベース: `defprotocol` → kind:"interface"、`defrecord`/`deftype` → kind:"class"、inline protocol 実装 → kind:"implements" TypeRelation を生成。
 >
-> § Elixir は dynamic で型階層がないため type_relations は出力しない。
+> § Elixir の型関係はパーサベース: `@behaviour <Module>` → enclosing defmodule implements Module、`defimpl <Protocol>, for: <Type>` → Type implements Protocol。
 >
 > 各言語とも LSP サーバーが未インストールの場合は空配列に graceful degrade する。
 

@@ -49,6 +49,13 @@ interface CargoMetadata {
 export class RustLanguageAdapter implements LanguageAdapter {
   readonly lang = "rust";
 
+  private externalClient: LspClient | null = null;
+
+  /** Reuse an externally-managed rust-analyzer client (test injection / batch runs). */
+  setExternalLspClient(client: LspClient | null): void {
+    this.externalClient = client;
+  }
+
   async detect(repoRoot: string): Promise<DetectResult> {
     const cargoToml = Bun.file(resolve(repoRoot, "Cargo.toml"));
     const exists = await cargoToml.exists();
@@ -260,7 +267,6 @@ export class RustLanguageAdapter implements LanguageAdapter {
     }
 
     // --- rust-analyzer LSP 統合 (degrade if unavailable) ---
-    const hasRustAnalyzer = (await whichTool("rust-analyzer")) !== null;
     let symbols: Symbol[] = [];
     let refs: Ref[] = [];
     let typeRelations: TypeRelation[] = [];
@@ -270,8 +276,11 @@ export class RustLanguageAdapter implements LanguageAdapter {
       .filter((f) => !f.generated && f.path.endsWith(".rs"))
       .map((f) => ({ relPath: f.path, unitId: f.unit_id }));
 
-    if (hasRustAnalyzer && allRsFiles.length > 0) {
-      const client = new LspClient(["rust-analyzer"], repoRoot);
+    if (!this.externalClient && (await whichTool("rust-analyzer")) === null) {
+      // No external client and no local rust-analyzer — degrade gracefully
+    } else if (allRsFiles.length > 0) {
+      const client = this.externalClient ?? new LspClient(["rust-analyzer"], repoRoot);
+      const ownClient = this.externalClient === null;
       try {
         const result = await this.indexWithRustAnalyzer(repoRoot, allRsFiles, unitIds, client);
         symbols = result.symbols;
@@ -281,7 +290,9 @@ export class RustLanguageAdapter implements LanguageAdapter {
       } catch {
         // rust-analyzer crashed or exited — degrade gracefully with empty LSP results
       } finally {
-        await client.shutdown();
+        if (ownClient) {
+          try { await client.shutdown(); } catch { /* ignore */ }
+        }
       }
     }
 

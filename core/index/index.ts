@@ -38,23 +38,24 @@ export async function buildIndexes(cacheDir: string, facts: Facts): Promise<void
   await ensureDir(dir);
 
   // unit_by_file: file_id → unit_id
-  const unitByFile: Record<string, string> = {};
+  const unitByFile: Record<string, string> = Object.create(null) as Record<string, string>;
   for (const f of facts.files) {
     unitByFile[f.id] = f.unit_id;
   }
 
   // symbol_by_name: name → symbol_id[]
-  const symbolByName: Record<string, string[]> = {};
+  // Object.create(null) で prototype 汚染を回避（"constructor" 等の組み込みプロパティ名と衝突しない）
+  const symbolByName: Record<string, string[]> = Object.create(null) as Record<string, string[]>;
   for (const s of facts.symbols) {
     if (!symbolByName[s.name]) symbolByName[s.name] = [];
-    symbolByName[s.name].push(s.id);
+    (symbolByName[s.name] as string[]).push(s.id);
   }
 
   // refs_by_symbol: to_symbol_id → Ref[]
-  const refsBySymbol: Record<string, Ref[]> = {};
+  const refsBySymbol: Record<string, Ref[]> = Object.create(null) as Record<string, Ref[]>;
   for (const r of facts.refs) {
     if (!refsBySymbol[r.to_symbol_id]) refsBySymbol[r.to_symbol_id] = [];
-    refsBySymbol[r.to_symbol_id].push(r);
+    (refsBySymbol[r.to_symbol_id] as Ref[]).push(r);
   }
 
   await Promise.all([

@@ -88,8 +88,9 @@ Unit {
 |---|---|---|
 | `detectCyclicDeps`（内蔵） | unit 間の循環依存 | 常時 |
 | `cppcheck` | warning / style / performance / portability | `cppcheck` が PATH にある場合 |
+| `clang-tidy` | clang-analyzer-* / bugprone-* チェック | `clang-tidy` が PATH にある場合 |
 
-将来 `clang-tidy` 統合を追加する場合は `--export-fixes` の YAML をパースする想定。
+clang-tidy の出力形式: `<file>:<line>:<col>: warning|error: <message> [<check-name>]`。`parseClangTidyOutput` 関数でパース。`note:` 行・repoRoot 外のファイルはスキップ。
 
 ---
 

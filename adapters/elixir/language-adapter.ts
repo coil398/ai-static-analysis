@@ -263,6 +263,31 @@ export class ElixirLanguageAdapter implements LanguageAdapter {
       }
     }
 
+    // Parser-based @behaviour / defimpl type_relations (always merged, even
+    // when LSP runs, because elixir-ls does not surface type_relations).
+    const seenSymId = new Set(symbols.map((s) => s.id));
+    const seenRelKey = new Set(
+      typeRelations.map((r) => `${r.from_type_id}::${r.to_type_id}::${r.kind}`),
+    );
+    for (const { relPath, unitId } of exFiles) {
+      const text = await safeRead(resolve(repoRoot, relPath));
+      if (text === null) continue;
+      const parsed = parseBehaviourRelations(text, unitId, relPath);
+      for (const sym of parsed.symbols) {
+        if (!seenSymId.has(sym.id)) {
+          symbols.push(sym);
+          seenSymId.add(sym.id);
+        }
+      }
+      for (const rel of parsed.typeRelations) {
+        const key = `${rel.from_type_id}::${rel.to_type_id}::${rel.kind}`;
+        if (!seenRelKey.has(key)) {
+          typeRelations.push(rel);
+          seenRelKey.add(key);
+        }
+      }
+    }
+
     return {
       added: {
         units,
@@ -413,6 +438,19 @@ export function parseModuleReferences(text: string): string[] {
 const DEFS_RE = /\b(def|defp|defmacro|defmacrop)\s+([\w?!]+)/g;
 const DEFMODULE_RE = /\bdefmodule\s+([A-Z][\w.]*)/g;
 
+/** Convert a byte offset in `source` to a 1-based line/column position. */
+function offsetToPosition(
+  source: string,
+  offset: number,
+): { line: number; column: number } {
+  let line = 1;
+  let lastNl = -1;
+  for (let i = 0; i < offset; i++) {
+    if (source.charCodeAt(i) === 10) { line++; lastNl = i; }
+  }
+  return { line, column: offset - lastNl };
+}
+
 /** Fallback symbol scan: emit modules + def/defp declarations. */
 export function parseTopLevelDefs(
   source: string,
@@ -423,15 +461,7 @@ export function parseTopLevelDefs(
   const unitPath = unitId.replace(/^unit:elixir:/, "");
 
   function pushSym(name: string, kind: string, exported: boolean, offset: number) {
-    let line = 1;
-    let lastNl = -1;
-    for (let i = 0; i < offset; i++) {
-      if (source.charCodeAt(i) === 10) {
-        line++;
-        lastNl = i;
-      }
-    }
-    const column = offset - lastNl;
+    const { line, column } = offsetToPosition(source, offset);
     const sigHash = hashSig(`${name}:${kind}:${line}`);
     out.push({
       id: `sym:elixir:${unitPath}#${kind}#${name}#sig:${sigHash}`,
@@ -460,6 +490,111 @@ export function parseTopLevelDefs(
     pushSym(name, kw === "defmacro" || kw === "defmacrop" ? "macro" : "function", exported, m.index);
   }
   return out;
+}
+
+// --- behaviour / protocol relations (parser-based) ---
+
+const BEHAVIOUR_RE = /@behaviour\s+([A-Z][\w.]*)/g;
+const DEFIMPL_RE = /\bdefimpl\s+([A-Z][\w.]*)\s*,\s*for:\s*([A-Z][\w.]*)/g;
+
+/**
+ * Parse `@behaviour` attributes and `defimpl` blocks to produce TypeRelations.
+ *
+ * - `@behaviour Foo` inside `defmodule M` → TypeRelation {from: M, to: Foo, kind: "implements"}
+ * - `defimpl Proto, for: Type` → TypeRelation {from: Type, to: Proto, kind: "implements"}
+ *
+ * Also emits Symbol entries for each defmodule (kind: "module") so callers can
+ * deduplicate against LSP-emitted symbols by name.
+ */
+export function parseBehaviourRelations(
+  source: string,
+  unitId: string,
+  relPath: string,
+): { symbols: Symbol[]; typeRelations: TypeRelation[] } {
+  const symbols: Symbol[] = [];
+  const typeRelations: TypeRelation[] = [];
+  const unitPath = unitId.replace(/^unit:elixir:/, "");
+
+  // Collect all defmodule positions and names, with their byte offsets so we
+  // can attribute @behaviour annotations to the enclosing module.
+  const moduleInfos: Array<{ name: string; offset: number; id: string }> = [];
+  DEFMODULE_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = DEFMODULE_RE.exec(source)) !== null) {
+    const name = m[1]!;
+    const pos = offsetToPosition(source, m.index);
+    const sigHash = hashSig(`${name}:module:${pos.line}`);
+    const id = `sym:elixir:${unitPath}#module#${name}#sig:${sigHash}`;
+    symbols.push({
+      id,
+      unit_id: unitId,
+      name,
+      kind: "module",
+      exported: true,
+      decl: { file_id: `file:${relPath}`, position: pos },
+    });
+    moduleInfos.push({ name, offset: m.index, id });
+  }
+
+  /** Return the innermost defmodule that encloses `offset`. */
+  function enclosingModule(offset: number): { name: string; id: string } | null {
+    // The nearest defmodule whose position is before `offset`.
+    let best: { name: string; offset: number; id: string } | null = null;
+    for (const mi of moduleInfos) {
+      if (mi.offset < offset && (best === null || mi.offset > best.offset)) {
+        best = mi;
+      }
+    }
+    return best;
+  }
+
+  // @behaviour Module  →  enclosing defmodule implements Module
+  BEHAVIOUR_RE.lastIndex = 0;
+  while ((m = BEHAVIOUR_RE.exec(source)) !== null) {
+    const behaviourName = m[1]!;
+    const enc = enclosingModule(m.index);
+    if (!enc) continue;
+    // behaviourName is typically an external module (e.g. GenServer) or a
+    // local one. We emit the relation with to_type_id as a bare name-based id
+    // so reviewers can correlate; full resolution would require cross-file data.
+    typeRelations.push({
+      from_type_id: enc.id,
+      to_type_id: `sym:elixir:${unitPath}#module#${behaviourName}`,
+      kind: "implements",
+    });
+  }
+
+  // defimpl Protocol, for: Type  →  Type implements Protocol
+  DEFIMPL_RE.lastIndex = 0;
+  while ((m = DEFIMPL_RE.exec(source)) !== null) {
+    const protoName = m[1]!;
+    const typeName = m[2]!;
+    const pos = offsetToPosition(source, m.index);
+    const sigHash = hashSig(`${typeName}:class:${pos.line}`);
+    const typeId = `sym:elixir:${unitPath}#class#${typeName}#sig:${sigHash}`;
+    // Emit a class symbol for the implementing type if not already captured.
+    if (!symbols.some((s) => s.name === typeName && s.kind === "class")) {
+      symbols.push({
+        id: typeId,
+        unit_id: unitId,
+        name: typeName,
+        kind: "class",
+        exported: true,
+        decl: { file_id: `file:${relPath}`, position: pos },
+      });
+    }
+    // Locate the protocol symbol id (may have been emitted from defmodule or
+    // from a previous iteration); fall back to a stable name-based id.
+    const protoSym = symbols.find((s) => s.name === protoName && s.kind === "module");
+    const protoId = protoSym?.id ?? `sym:elixir:${unitPath}#module#${protoName}`;
+    typeRelations.push({
+      from_type_id: typeId,
+      to_type_id: protoId,
+      kind: "implements",
+    });
+  }
+
+  return { symbols, typeRelations };
 }
 
 async function runElixirLsIndexing(

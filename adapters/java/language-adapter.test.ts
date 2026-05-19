@@ -5,6 +5,7 @@ import {
   parseImports,
   parseTopLevelSymbols,
   parseCheckstyleXml,
+  parsePmdJson,
 } from "./index.ts";
 import { whichTool } from "../shared/index.ts";
 
@@ -295,5 +296,129 @@ describe("parseCheckstyleXml", () => {
 
   test("returns empty array for empty input", () => {
     expect(parseCheckstyleXml("", "/repo")).toEqual([]);
+  });
+});
+
+describe("parsePmdJson", () => {
+  test("converts PMD JSON output to Diagnostic entries (camelCase fields)", () => {
+    // PMD の実際の JSON 出力は camelCase フィールド (beginLine/beginColumn/description) を使う
+    const json = JSON.stringify({
+      files: [
+        {
+          filename: `${TESTDATA}/app/src/main/java/com/example/app/Main.java`,
+          violations: [
+            { beginLine: 5, beginColumn: 3, priority: 1, description: "Avoid unused imports" },
+            { beginLine: 12, beginColumn: 1, priority: 3, description: "Line is too long" },
+            { beginLine: 20, beginColumn: 2, priority: 4, description: "Consider using a constant" },
+          ],
+        },
+      ],
+    });
+    const diags = parsePmdJson(json, TESTDATA);
+    expect(diags).toHaveLength(3);
+    expect(diags[0]).toMatchObject({
+      file_id: "file:app/src/main/java/com/example/app/Main.java",
+      position: { line: 5, column: 3 },
+      severity: "error",
+      message: "Avoid unused imports",
+      tool: "pmd",
+    });
+    expect(diags[1]).toMatchObject({
+      position: { line: 12, column: 1 },
+      severity: "warning",
+      message: "Line is too long",
+      tool: "pmd",
+    });
+    expect(diags[2]).toMatchObject({
+      position: { line: 20, column: 2 },
+      severity: "info",
+      message: "Consider using a constant",
+      tool: "pmd",
+    });
+  });
+
+  test("priority boundary values: priority<=2 → error, 3 → warning, >=4 → info", () => {
+    const json = JSON.stringify({
+      files: [
+        {
+          filename: `${TESTDATA}/app/src/main/java/com/example/app/Main.java`,
+          violations: [
+            { beginLine: 1, beginColumn: 1, priority: 2, description: "boundary error" },
+            { beginLine: 2, beginColumn: 1, priority: 5, description: "lowest priority info" },
+          ],
+        },
+      ],
+    });
+    const diags = parsePmdJson(json, TESTDATA);
+    expect(diags).toHaveLength(2);
+    // priority: 2 は <= 2 なので "error"
+    expect(diags[0]!.severity).toBe("error");
+    // priority: 5 は >= 4 なので "info"
+    expect(diags[1]!.severity).toBe("info");
+  });
+
+  test("falls back to message field when description is absent", () => {
+    // legacy fallback: description がない場合は message を使う
+    const json = JSON.stringify({
+      files: [
+        {
+          filename: `${TESTDATA}/app/src/main/java/com/example/app/Main.java`,
+          violations: [
+            { beginLine: 1, beginColumn: 1, priority: 3, message: "legacy message field" },
+          ],
+        },
+      ],
+    });
+    const diags = parsePmdJson(json, TESTDATA);
+    expect(diags).toHaveLength(1);
+    expect(diags[0]!.message).toBe("legacy message field");
+  });
+
+  test("returns empty string when both description and message are absent", () => {
+    const json = JSON.stringify({
+      files: [
+        {
+          filename: `${TESTDATA}/app/src/main/java/com/example/app/Main.java`,
+          violations: [
+            { beginLine: 1, beginColumn: 1, priority: 3 },
+          ],
+        },
+      ],
+    });
+    const diags = parsePmdJson(json, TESTDATA);
+    expect(diags).toHaveLength(1);
+    expect(diags[0]!.message).toBe("");
+  });
+
+  test("returns empty array for empty violations array", () => {
+    const json = JSON.stringify({
+      files: [
+        {
+          filename: `${TESTDATA}/app/src/main/java/com/example/app/Main.java`,
+          violations: [],
+        },
+      ],
+    });
+    const diags = parsePmdJson(json, TESTDATA);
+    expect(diags).toHaveLength(0);
+  });
+
+  test("returns empty array for empty/malformed input", () => {
+    expect(parsePmdJson("", "/repo")).toEqual([]);
+    expect(parsePmdJson("not-json", "/repo")).toEqual([]);
+    expect(parsePmdJson("{}", "/repo")).toEqual([]);
+  });
+
+  test("excludes files outside repoRoot", () => {
+    const json = JSON.stringify({
+      files: [
+        {
+          filename: "/outside/project/Main.java",
+          violations: [{ beginLine: 1, beginColumn: 1, priority: 2, description: "test" }],
+        },
+      ],
+    });
+    const diags = parsePmdJson(json, TESTDATA);
+    expect(diags).toHaveLength(0);
   });
 });

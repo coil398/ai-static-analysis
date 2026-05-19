@@ -3,6 +3,7 @@ export {
   parseNamespace,
   parseRequires,
   parseTopLevelDefs,
+  parseProtocolRelations,
   parseCljKondoJson,
   extractSourcePaths,
 } from "./language-adapter.ts";

@@ -371,6 +371,21 @@ export class JavaLanguageAdapter implements LanguageAdapter {
       }
     }
 
+    if (await whichTool("pmd")) {
+      const configPath = await findFirstExisting(repoRoot, [
+        "pmd.xml",
+        "ruleset.xml",
+        "config/pmd/rules.xml",
+      ]);
+      if (configPath) {
+        const result = await exec(
+          ["pmd", "check", "-d", ".", "-R", configPath, "-f", "json", "--no-fail-on-violation"],
+          { cwd: repoRoot },
+        );
+        diagnostics.push(...parsePmdJson(result.stdout, repoRoot));
+      }
+    }
+
     return diagnostics;
   }
 
@@ -958,4 +973,54 @@ function unescapeXml(s: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
     .replace(/&amp;/g, "&");
+}
+
+/**
+ * Parse pmd JSON output (pmd check -f json) into Diagnostic[].
+ * PMD priority: 1 (highest) → 5 (lowest). Mapping:
+ *   priority <= 2 → "error", priority === 3 → "warning", >= 4 → "info"
+ */
+export function parsePmdJson(json: string, repoRoot: string): Diagnostic[] {
+  if (!json.trim()) return [];
+  const out: Diagnostic[] = [];
+  let data: unknown;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    return [];
+  }
+  const files = (data as { files?: unknown[] })?.files;
+  if (!Array.isArray(files)) return [];
+  for (const file of files) {
+    const f = file as { filename?: string; violations?: unknown[] };
+    if (!f.filename) continue;
+    const rel = relative(repoRoot, resolve(repoRoot, f.filename));
+    if (rel.startsWith("..")) continue;
+    if (!Array.isArray(f.violations)) continue;
+    for (const v of f.violations) {
+      const vio = v as {
+        beginLine?: number;   // camelCase (PMD JSON 実際の出力)
+        beginColumn?: number; // camelCase
+        priority?: number;
+        description?: string; // PMD JSON の実際のフィールド名
+        message?: string;     // legacy fallback
+      };
+      const priority = vio.priority ?? 3;
+      const severity: Diagnostic["severity"] =
+        priority <= 2 ? "error"
+        : priority === 3 ? "warning"
+        : "info";
+      out.push({
+        file_id: `file:${rel}`,
+        position: {
+          line: vio.beginLine ?? 1,
+          column: vio.beginColumn ?? 1,
+        },
+        severity,
+        message: vio.description ?? vio.message ?? "",
+        tool: "pmd",
+      });
+    }
+  }
+  return out;
 }

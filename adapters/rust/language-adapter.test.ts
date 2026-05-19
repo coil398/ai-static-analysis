@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { resolve } from "node:path";
 import { RustLanguageAdapter } from "./language-adapter.ts";
-import { exec, whichTool } from "../shared/index.ts";
+import { exec, whichTool, LspClient } from "../shared/index.ts";
 
 const TESTDATA = resolve(import.meta.dir, "testdata");
 
@@ -200,4 +200,30 @@ describe("RustLanguageAdapter", () => {
     ].join("\n");
     expect(allMessages).toContain("rust-analyzer");
   }, 180_000);
+
+  test("setExternalLspClient allows injecting an external client", async () => {
+    const adapterWithClient = new RustLanguageAdapter();
+    // null を設定してデフォルト動作に戻せること
+    adapterWithClient.setExternalLspClient(null);
+    expect(adapterWithClient["externalClient"]).toBeNull();
+  });
+
+  test.skipIf(!hasRustAnalyzer)("setExternalLspClient uses provided client without shutdown", async () => {
+    const adapterWithClient = new RustLanguageAdapter();
+    const externalClient = new LspClient(["rust-analyzer"], TESTDATA);
+    adapterWithClient.setExternalLspClient(externalClient);
+
+    try {
+      const units = await adapterWithClient.enumerateUnits(TESTDATA, {});
+      const delta = await adapterWithClient.indexUnits(units, {});
+      // 外部クライアントを使っても正常に解析できること
+      expect(delta.added.files?.length).toBeGreaterThan(0);
+      if (hasRustAnalyzer) {
+        expect(delta.added.symbols?.length).toBeGreaterThan(0);
+      }
+    } finally {
+      // 外部クライアントを手動で shutdown する
+      await externalClient.shutdown();
+    }
+  }, 60_000);
 });

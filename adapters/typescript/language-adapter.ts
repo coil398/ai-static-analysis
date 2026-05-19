@@ -34,6 +34,13 @@ import type { LspDocumentSymbol } from "../shared/index.ts";
 export class TypeScriptLanguageAdapter implements LanguageAdapter {
   readonly lang = "typescript";
 
+  private externalClient: LspClient | null = null;
+
+  /** Reuse an externally-managed typescript-language-server client (test injection / batch runs). */
+  setExternalLspClient(client: LspClient | null): void {
+    this.externalClient = client;
+  }
+
   async detect(repoRoot: string): Promise<DetectResult> {
     const tsconfig = Bun.file(resolve(repoRoot, "tsconfig.json"));
     if (await tsconfig.exists()) {
@@ -228,14 +235,16 @@ export class TypeScriptLanguageAdapter implements LanguageAdapter {
     }
 
     // --- typescript-language-server integration (degrade if unavailable) ---
-    const hasTsServer = (await whichTool("typescript-language-server")) !== null;
     let symbols: Symbol[] = [];
     let refs: Ref[] = [];
     let typeRelations: TypeRelation[] = [];
     let callEdges: CallEdge[] = [];
 
-    if (hasTsServer && allTsFiles.length > 0) {
-      const client = new LspClient(["typescript-language-server", "--stdio"], repoRoot);
+    if (!this.externalClient && (await whichTool("typescript-language-server")) === null) {
+      // No external client and no local typescript-language-server — degrade gracefully
+    } else if (allTsFiles.length > 0) {
+      const client = this.externalClient ?? new LspClient(["typescript-language-server", "--stdio"], repoRoot);
+      const ownClient = this.externalClient === null;
       try {
         const result = await this.indexWithTsServer(
           repoRoot,
@@ -250,7 +259,9 @@ export class TypeScriptLanguageAdapter implements LanguageAdapter {
       } catch {
         // typescript-language-server crashed or exited — degrade gracefully with empty LSP results
       } finally {
-        await client.shutdown();
+        if (ownClient) {
+          try { await client.shutdown(); } catch { /* ignore */ }
+        }
       }
     }
 

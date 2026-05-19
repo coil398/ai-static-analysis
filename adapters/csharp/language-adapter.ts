@@ -70,6 +70,19 @@ const CS_SYMBOL_KIND_MAP: Record<number, string> = {
 export class CSharpLanguageAdapter implements LanguageAdapter {
   readonly lang = "csharp";
 
+  private externalClient: LspClient | null = null;
+
+  /**
+   * Reuse an externally-managed csharp-ls client (test injection / batch runs).
+   * NOTE: When injecting an external client, the caller is responsible for
+   * providing a LspClient that was constructed with the correct dotnet environment
+   * variables (see buildDotnetEnv()). The adapter will not call buildDotnetEnv()
+   * when an external client is supplied.
+   */
+  setExternalLspClient(client: LspClient | null): void {
+    this.externalClient = client;
+  }
+
   async detect(repoRoot: string): Promise<DetectResult> {
     // Check for .sln files
     try {
@@ -244,8 +257,9 @@ export class CSharpLanguageAdapter implements LanguageAdapter {
       .filter((f) => !f.generated && (f.path.endsWith(".cs") || f.path.endsWith(".razor")))
       .map((f) => ({ relPath: f.path, unitId: f.unit_id }));
 
-    if (lspCommand && allCsFiles.length > 0) {
-      const client = new LspClient(lspCommand, repoRoot, undefined, buildDotnetEnv(), { handleServerRequests: true });
+    const useExternal = this.externalClient !== null;
+    if ((lspCommand || useExternal) && allCsFiles.length > 0) {
+      const client = this.externalClient ?? new LspClient(lspCommand!, repoRoot, undefined, buildDotnetEnv(), { handleServerRequests: true });
       try {
         const result = await this.indexWithCsharpLs(repoRoot, allCsFiles, new Set(units.map((u) => u.id)), client);
         symbols = result.symbols;
@@ -255,7 +269,9 @@ export class CSharpLanguageAdapter implements LanguageAdapter {
       } catch {
         // C# LSP crashed or exited — degrade gracefully with empty LSP results
       } finally {
-        await client.shutdown();
+        if (!useExternal) {
+          try { await client.shutdown(); } catch { /* ignore */ }
+        }
       }
     }
 

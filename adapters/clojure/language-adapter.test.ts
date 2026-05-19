@@ -7,6 +7,7 @@ import {
   parseNamespace,
   parseRequires,
   parseTopLevelDefs,
+  parseProtocolRelations,
   parseCljKondoJson,
   extractSourcePaths,
 } from "./index.ts";
@@ -182,6 +183,70 @@ describe("extractSourcePaths", () => {
   test("defaults to ['src'] when nothing matches", () => {
     expect(extractSourcePaths("{}", "deps.edn")).toEqual(["src"]);
   });
+});
+
+describe("parseProtocolRelations", () => {
+  test("emits interface symbol for defprotocol and class symbol for defrecord", () => {
+    const src = `
+(ns myapp.lib.protocols)
+
+(defprotocol Greeter
+  "Protocol for greeting."
+  (greet [this name] "Returns a greeting for the given name."))
+
+(defrecord ConsoleGreeter []
+  Greeter
+  (greet [_this name]
+    (str "Hello, " name "!")))
+`;
+    const { symbols, typeRelations } = parseProtocolRelations(
+      src,
+      "unit:clojure:.",
+      "src/myapp/lib/protocols.clj",
+    );
+    const kinds = symbols.map((s) => `${s.kind}:${s.name}`).sort();
+    expect(kinds).toContain("interface:Greeter");
+    expect(kinds).toContain("class:ConsoleGreeter");
+    expect(typeRelations).toHaveLength(1);
+    expect(typeRelations[0]!.kind).toBe("implements");
+    expect(typeRelations[0]!.from_type_id).toContain("ConsoleGreeter");
+    expect(typeRelations[0]!.to_type_id).toContain("Greeter");
+  });
+
+  test("returns empty when no protocols or records are present", () => {
+    const src = `(ns simple)\n(defn greet [name] (str "Hi " name))`;
+    const { symbols, typeRelations } = parseProtocolRelations(
+      src,
+      "unit:clojure:.",
+      "src/simple.clj",
+    );
+    expect(symbols).toHaveLength(0);
+    expect(typeRelations).toHaveLength(0);
+  });
+
+  test("handles defprotocol without a defrecord implementation", () => {
+    const src = `
+(ns myapp.proto)
+(defprotocol Printable
+  (render [this]))
+`;
+    const { symbols, typeRelations } = parseProtocolRelations(
+      src,
+      "unit:clojure:.",
+      "src/myapp/proto.clj",
+    );
+    expect(symbols.some((s) => s.kind === "interface" && s.name === "Printable")).toBe(true);
+    expect(typeRelations).toHaveLength(0);
+  });
+
+  test("indexUnits emits type_relations for protocols.clj testdata", async () => {
+    const adapter = new ClojureLanguageAdapter();
+    const units = await adapter.enumerateUnits(TESTDATA, {});
+    const delta = await adapter.indexUnits(units, {});
+    const rels = delta.added.type_relations ?? [];
+    // protocols.clj has ConsoleGreeter implementing Greeter
+    expect(rels.some((r) => r.kind === "implements")).toBe(true);
+  }, LSP_TIMEOUT_MS);
 });
 
 describe("parseCljKondoJson", () => {

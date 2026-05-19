@@ -107,9 +107,11 @@ Unit {
 |---|---|---|
 | `detectCyclicDeps` (内蔵) | unit 間の循環依存 | 常時 |
 | `checkstyle` | スタイル違反 | `checkstyle` が PATH にあり、かつ `checkstyle.xml` または `config/checkstyle/checkstyle.xml` が存在 |
-| （将来）spotbugs / pmd | バグパターン / 静的解析 | 同等条件で追加予定 |
+| `pmd` | バグパターン・静的解析 | `pmd` が PATH にあり、かつ `pmd.xml` / `ruleset.xml` / `config/pmd/rules.xml` のいずれかが存在 |
 
 checkstyle の出力は XML（`-f xml`）を期待。`<file name="...">` 配下の `<error line column severity message />` を Diagnostic に変換する。
+
+PMD の出力は JSON（`-f json`）を期待。`{ files: [{ filename, violations: [{ beginline, begincolumn, priority, message }] }] }` 形式。priority 1–2 → `error`、3 → `warning`、4 以上 → `info` に変換。`parsePmdJson` 関数でパース。
 
 ---
 

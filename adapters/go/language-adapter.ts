@@ -403,6 +403,16 @@ export class GoLanguageAdapter implements LanguageAdapter {
         if (!unitIds.has(calleeSym.unit_id)) continue;
 
         const callerFileId = `file:${relPath}`;
+
+        // callee の receiver 型が interface として収集されていれば interface dispatch。
+        // ただし gopls が callHierarchy/outgoingCalls の callee として interface method 宣言ではなく
+        // concrete 実装を返す場合、calleeReceiver は concrete 型名になり "static" にフォールバックする。
+        // GO_SPEC.md §10.2 "既知の制限" 参照。
+        const calleeReceiver = calleeSym.metadata?.["receiver"] as string | undefined;
+        const isInterfaceDispatch =
+          calleeReceiver != null &&
+          interfaceSymbols.some((is) => is.symbol.name === calleeReceiver);
+
         callEdges.push({
           caller_id: symbol.id,
           callee_id: calleeSym.id,
@@ -413,7 +423,7 @@ export class GoLanguageAdapter implements LanguageAdapter {
               column: callee.rangeCol,
             },
           },
-          dispatch: "static",
+          dispatch: isInterfaceDispatch ? "interface" : "static",
         });
 
         // Each call edge also implies a reference

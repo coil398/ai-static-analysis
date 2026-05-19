@@ -1,2 +1,4 @@
 [test]
 concurrency = 4
+coverageDir = "coverage"
+coverageReporters = ["lcov", "text"]

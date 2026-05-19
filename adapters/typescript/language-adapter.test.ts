@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { resolve } from "node:path";
 import { TypeScriptLanguageAdapter } from "./language-adapter.ts";
-import { exec } from "../shared/index.ts";
+import { exec, LspClient } from "../shared/index.ts";
 
 const TESTDATA = resolve(import.meta.dir, "testdata");
 // whichTool だけだと shim が存在するが実体がないケースを検出できないため --version で確認
@@ -214,4 +214,30 @@ describe("TypeScriptLanguageAdapter", () => {
     expect(result).toHaveProperty("failed");
     expect(result).toHaveProperty("notes");
   }, 120_000);
+
+  test("setExternalLspClient allows injecting an external client", async () => {
+    const adapterWithClient = new TypeScriptLanguageAdapter();
+    // null を設定してデフォルト動作に戻せること
+    adapterWithClient.setExternalLspClient(null);
+    expect(adapterWithClient["externalClient"]).toBeNull();
+  });
+
+  test.skipIf(!hasTsServer)("setExternalLspClient uses provided client without shutdown", async () => {
+    const adapterWithClient = new TypeScriptLanguageAdapter();
+    const externalClient = new LspClient(["typescript-language-server", "--stdio"], TESTDATA);
+    adapterWithClient.setExternalLspClient(externalClient);
+
+    try {
+      const units = await adapterWithClient.enumerateUnits(TESTDATA, {});
+      const delta = await adapterWithClient.indexUnits(units, {});
+      // 外部クライアントを使っても正常に解析できること
+      expect(delta.added.files?.length).toBeGreaterThan(0);
+      if (hasTsServer) {
+        expect(delta.added.symbols?.length).toBeGreaterThan(0);
+      }
+    } finally {
+      // 外部クライアントを手動で shutdown する
+      await externalClient.shutdown();
+    }
+  }, 60_000);
 });

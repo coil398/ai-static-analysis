@@ -6,6 +6,7 @@ import {
   CppLanguageAdapter,
   parseIncludes,
   parseCppcheckOutput,
+  parseClangTidyOutput,
 } from "./index.ts";
 import { whichTool } from "../shared/index.ts";
 
@@ -123,6 +124,54 @@ describe("parseIncludes", () => {
 
   test("returns empty array when no includes are present", () => {
     expect(parseIncludes("int main() { return 0; }")).toEqual([]);
+  });
+});
+
+describe("parseClangTidyOutput", () => {
+  test("parses warning and error lines into Diagnostic entries", () => {
+    const cwd = "/repo";
+    const out = parseClangTidyOutput(
+      `/repo/foo.cpp:5:10: warning: use nullptr instead of 0 [modernize-use-nullptr]\n` +
+      `/repo/bar.cpp:3:1: error: null pointer dereference [clang-analyzer-core.NullDereference]\n`,
+      cwd,
+    );
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({
+      file_id: "file:foo.cpp",
+      position: { line: 5, column: 10 },
+      severity: "warning",
+      tool: "clang-tidy",
+    });
+    expect(out[0]!.message).toContain("modernize-use-nullptr");
+    expect(out[1]).toMatchObject({
+      file_id: "file:bar.cpp",
+      position: { line: 3, column: 1 },
+      severity: "error",
+      tool: "clang-tidy",
+    });
+  });
+
+  test("excludes note lines", () => {
+    const out = parseClangTidyOutput(
+      `/repo/foo.cpp:5:10: note: 'x' declared here\n` +
+      `/repo/foo.cpp:7:3: warning: unused variable [clang-diagnostic-unused-variable]\n`,
+      "/repo",
+    );
+    // note lines are excluded; only the warning remains
+    expect(out).toHaveLength(1);
+    expect(out[0]!.severity).toBe("warning");
+  });
+
+  test("excludes files outside repoRoot", () => {
+    const out = parseClangTidyOutput(
+      `/outside/foo.cpp:1:1: warning: something [check]\n`,
+      "/repo",
+    );
+    expect(out).toHaveLength(0);
+  });
+
+  test("returns empty array for empty input", () => {
+    expect(parseClangTidyOutput("", "/repo")).toEqual([]);
   });
 });
 

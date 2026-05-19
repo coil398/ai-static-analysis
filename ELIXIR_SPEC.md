@@ -87,7 +87,7 @@ elixir-ls が空配列を返した場合（プロジェクト未コンパイル 
 | `refs`（type_ref） | `references` を module/namespace/struct に発行 |
 | `refs`（reference） | `references` を function に発行 |
 
-`type_relations` は出力しない。protocols / behaviours の対応は将来検討。
+`type_relations`: パーサベースで `@behaviour <Module>` 属性と `defimpl <Protocol>, for: <Type>` ブロックを解析し、`kind: "implements"` の TypeRelation を生成する。`parseBehaviourRelations` 関数で実装。LSP 結果の有無に関わらず常にマージされる。`defimpl` の実装型は `kind: "class"` の Symbol としても追加される。
 
 ---
 

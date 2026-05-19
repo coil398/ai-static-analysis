@@ -68,17 +68,24 @@ Claude Code はこのディレクトリの `SKILL.md` をエントリポイン�
 - Java アダプタ追加: unit 列挙（Maven/Gradle）、deps（import → package_prefixes マッチ）、jdtls 経由で symbols / refs / call_edges / type_relations を抽出。jdtls 未導入時は parser ベースで top-level 型のみの degrade。Action は Gradle/Maven。`JAVA_SPEC.md` 参照。
 - C++ アダプタ追加: unit 列挙（top-level source dirs）、deps（`#include "..."` → loose header の owner マッチ）、clangd 経由で symbols / refs / call_edges / type_relations を抽出。`compile_commands.json` 推奨。Action は CMake / Make。診断は cppcheck。`CPP_SPEC.md` 参照。
 - Haskell アダプタ追加: unit 列挙（`.cabal` スタンザごとに library/executable/test-suite/benchmark）、deps（import + build-depends）、HLS 経由で symbols / refs / call_edges / type_relations を抽出。HLS は GHC バージョンと厳密に紐づくため `haskell-actions/setup` を CI で利用。`HASKELL_SPEC.md` 参照。
-- Clojure アダプタ追加: unit 列挙（deps.edn / project.clj / shadow-cljs.edn / bb.edn / build.boot）、deps（`(:require ...)` の namespace 解決）、clojure-lsp 経由で symbols / refs / call_edges。clj-kondo が出力する diagnostics を取り込む。type_relations は class-based ではないため空。`CLOJURE_SPEC.md` 参照。
-- Elixir アダプタ追加: unit 列挙（mix.exs 単発 or `apps/*` の umbrella）、deps（alias/import/use/require の module → unit マッピング）、elixir-ls 経由で symbols / refs / call_edges。LSP が空配列を返す場合はパーサベースの top-level `defmodule`/`def`/`defp` 抽出にフォールバック。診断は credo。`ELIXIR_SPEC.md` 参照。
+- Clojure アダプタ追加: unit 列挙（deps.edn / project.clj / shadow-cljs.edn / bb.edn / build.boot）、deps（`(:require ...)` の namespace 解決）、clojure-lsp 経由で symbols / refs / call_edges。clj-kondo が出力する diagnostics を取り込む。`parseProtocolRelations` でパーサベースの type_relations（defprotocol → interface / defrecord → class / implements）を追加済み。`CLOJURE_SPEC.md` 参照。
+- Elixir アダプタ追加: unit 列挙（mix.exs 単発 or `apps/*` の umbrella）、deps（alias/import/use/require の module → unit マッピング）、elixir-ls 経由で symbols / refs / call_edges。LSP が空配列を返す場合はパーサベースの top-level `defmodule`/`def`/`defp` 抽出にフォールバック。`parseBehaviourRelations` でパーサベースの type_relations（`@behaviour` / `defimpl ... for:` → implements）を追加済み。診断は credo。`ELIXIR_SPEC.md` 参照。
 - SARIF v2.1.0 エクスポート: `core/sarif/diagnosticsToSarif` で `Diagnostic[]` → SARIF Log を生成。tool ごとに run を分け、ruleId は `[code]` トークンから導出（無ければ tool 名）。GitHub code scanning と直接連携可能。
 - compare-facts スキル: 2 つの cacheDir を比較し、units/files/deps/symbols/diagnostics の +/- と（オプションで）影響範囲を返す。`skills/compare.ts`。
 - visualize-graph スキル: facts を Mermaid または DOT に変換。`kind: "deps"` で unit 依存、`kind: "callgraph"` で関数間呼び出し。`include`/`match`/`maxEdges` でフィルタリング・トランケーション。`skills/visualize.ts`。
+- Go アダプタ: interface dispatch 判定を実装済み。call_edges の `dispatch` フィールドが `"interface"` or `"static"` を正確に返す。phase 1 収集済みの `interfaceSymbols` を再利用（追加 LSP コール不要）。
+- Java アダプタ: PMD 統合（`parsePmdJson`）を追加。`pmd.xml` / `ruleset.xml` / `config/pmd/rules.xml` のいずれかが存在すれば `diagnose` で実行。
+- C++ アダプタ: clang-tidy 統合（`parseClangTidyOutput`）を追加。`clang-analyzer-*,bugprone-*` チェックを実行。note 行・repoRoot 外ファイルはスキップ。
+- `setExternalLspClient(client)` を TypeScript / Python / Rust / C# アダプタに追加。バッチ処理・E2E テストでの LSP クライアント再利用を可能にする。
+- E2E テスト拡充（`skills/e2e.test.ts`）: TypeScript / Python / Rust / C# の各アダプタで indexFacts → queryDeps/queryDefs/queryDiagnostics → updateFacts → runAction のフルパイプラインテストを追加。
+- InsightAdapter インターフェースを `core/adapter/types.ts` から削除（廃止・不使用のため）。`skills/insights.ts` は独自の `InsightScope` で継続稼働。
+- CI カバレッジ: `bun test --coverage --coverage-reporter=lcov` を CI に組み込み。`coverage/lcov.info` を artifact として14日保存。`bunfig.toml` に `coverageDir` / `coverageReporters` 設定追加。`package.json` に `test:coverage` スクリプト追加。
 
 ## 開発メモ
 
 ### 設計判断
 
-- InsightAdapter（外部 AI API 呼び出し）は実装しない設計。Claude Code 自身がスキル定義（.md）を読んで分析を行う。`skills/insights.ts` はコンテキスト準備と query* のみ担当。
+- InsightAdapter インターフェースは廃止・削除済み（`core/adapter/types.ts` から除去）。外部 AI API を呼び出す設計は採用しない。Claude Code 自身がスキル定義（.md）を読んで分析を行う。`skills/insights.ts` はコンテキスト準備と query* のみ担当し、独自の `InsightScope` 型を定義している。
 - skills 層は `createRegistry()` で毎回新しいレジストリを生成する設計。将来 DI に変えるなら引数に渡す形に変更する。
 - JSONL 一本化済み。legacy JSON（`facts.json` 単一ファイル）サポートは完全削除。`readFacts` は `readFactsPartial(cacheDir, ALL_FIELDS)` の薄いラッパー。
 
@@ -117,3 +124,6 @@ Claude Code はこのディレクトリの `SKILL.md` をエントリポイン�
 - メタスキル (`create-skill`, `improve-skill`) は core/ 実装時は不使用。スキル定義 .md 作成時に使用。
 - TypeScript linter フック（tsc）は未使用 import・未使用変数・未使用関数を検出してコミットをブロックする。実装時は import 追加・削除のたびに使用箇所の有無を確認すること。
 - `storage.ts` と `query.ts` の間には循環依存がある。`writeFactsJsonl` 後に `clearFactsCache` を呼ぶ場合は動的 import（`await import('./query.ts')`）で回避すること。
+- unit ID prefix と `adapter.lang` は値が異なる言語がある。unit ID は短縮 prefix（`py`/`ts`/`rs`/`cs`）、`adapter.lang` は完全名（`python`/`typescript`/`rust`/`csharp`）。`go`/`java`/`cpp`/`haskell` 等は一致。unit ID から adapter を引くコードでは `skills/update.ts` の `UNIT_PREFIX_TO_LANG` マッピングを必ず経由すること（`unit.id.split(":")[1]` の生の prefix で `registry.getLanguageAdapter()` を呼ぶと Python/Rust/C# で `No adapter for language` になる）。`skills/query.ts` の `LSP_SUPPORTED_PREFIXES` 等、prefix を扱う他箇所も同じ不一致に注意。
+- `facts.symbols` の `name` をキーにした object map を作るときは `Object.create(null)` を使うこと。`Record<string, string[]>` の通常 object literal だと、シンボル名が `constructor` / `__proto__` / `toString` 等のとき `Object.prototype` のメンバを踏んで prototype 汚染が起きる（例: TypeScript の `constructor()` メソッドが LSP から `constructor` という名前で返り `core/index/index.ts` でクラッシュ）。`symbolByName` / `unitByFile` / `refsBySymbol` 等が該当。
+- 外部ツール（PMD / clang-tidy / linter 等）の出力をパースする実装は、フィールド名・キー・スキーマを公式 doc または実ツール出力で裏取りしてから書くこと。`parsePmdJson` で PMD JSON の実フィールド名（`description` / `beginLine` の camelCase）を記憶ベースで `message` / `beginline` と誤って実装し、テストモックも同じ誤りで作ったため CI を素通りした実例がある（実ツール出力では診断メッセージが空・位置が 1:1 に固定される）。モックデータは「実装の鏡」ではなく「公式仕様の写し」として作ること。

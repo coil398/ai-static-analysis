@@ -403,6 +403,27 @@ export class CppLanguageAdapter implements LanguageAdapter {
       );
       diagnostics.push(...parseCppcheckOutput(result.stderr, repoRoot));
     }
+
+    if (await whichTool("clang-tidy")) {
+      // Collect source files for clang-tidy (accepts file list, not directory)
+      const sourceFiles: string[] = [];
+      for (const unit of units) {
+        const unitDir = resolve(repoRoot, unit.path);
+        const collected = await collectFiles(unitDir, CPP_SOURCE_EXT, repoRoot);
+        for (const relPath of collected) {
+          sourceFiles.push(relPath);
+        }
+      }
+      if (sourceFiles.length > 0) {
+        const result = await exec(
+          ["clang-tidy", "-checks=clang-analyzer-*,bugprone-*", ...sourceFiles],
+          { cwd: repoRoot },
+        );
+        // clang-tidy outputs diagnostics to stdout
+        diagnostics.push(...parseClangTidyOutput(result.stdout, repoRoot));
+      }
+    }
+
     return diagnostics;
   }
 }
@@ -750,6 +771,36 @@ export function parseCppcheckOutput(output: string, repoRoot: string): Diagnosti
       severity,
       message: `${m[5]!} [${m[6]!}]`,
       tool: "cppcheck",
+    });
+  }
+  return out;
+}
+
+// clang-tidy output format: file:line:column: warning/error: message [check-name]
+const CLANG_TIDY_RE =
+  /^(.+?):(\d+):(\d+):\s*(warning|error):\s*(.+?)\s*\[([^\]]+)\]\s*$/gm;
+
+/**
+ * Parse clang-tidy output (stdout) into Diagnostic[].
+ * note: lines are excluded (they are supplementary context for the previous diagnostic).
+ */
+export function parseClangTidyOutput(output: string, repoRoot: string): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  CLANG_TIDY_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = CLANG_TIDY_RE.exec(output)) !== null) {
+    const filePath = m[1]!;
+    const rel = relative(repoRoot, resolve(repoRoot, filePath));
+    if (rel.startsWith("..")) continue;
+    const severityRaw = m[4]!;
+    const severity: Diagnostic["severity"] =
+      severityRaw === "error" ? "error" : "warning";
+    out.push({
+      file_id: `file:${rel}`,
+      position: { line: parseInt(m[2]!, 10), column: parseInt(m[3]!, 10) },
+      severity,
+      message: `${m[5]!} [${m[6]!}]`,
+      tool: "clang-tidy",
     });
   }
   return out;

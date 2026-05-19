@@ -5,11 +5,6 @@ import type {
   Dep,
   FactsDelta,
   Diagnostic,
-  IntentTag,
-  Summary,
-  BugSmell,
-  PatternTag,
-  NamingIssue,
 } from "../schema/types.js";
 
 // §8.1 detect() result
@@ -66,23 +61,6 @@ export interface LanguageAdapter {
   ): Promise<Diagnostic[]>;
   doctor(): Promise<DoctorResult>;
   bootstrap(): Promise<BootstrapResult>;
-}
-
-// §8.3 InsightAdapter — AI-powered non-deterministic analysis
-export interface InsightScope {
-  unit_ids?: string[]; // analyze specific units (omit for all)
-  symbol_ids?: string[]; // analyze specific symbols (omit for all)
-  file_ids?: string[]; // analyze specific files (omit for all)
-}
-
-export interface InsightAdapter {
-  readonly model: string; // model id used for analysis
-
-  tagIntents(scope: InsightScope): Promise<IntentTag[]>;
-  summarize(scope: InsightScope): Promise<Summary[]>;
-  detectBugSmells(scope: InsightScope): Promise<BugSmell[]>;
-  detectPatterns(scope: InsightScope): Promise<PatternTag[]>;
-  reviewNaming(scope: InsightScope): Promise<NamingIssue[]>;
 }
 
 // §8.2 ActionAdapter

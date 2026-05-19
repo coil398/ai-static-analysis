@@ -35,6 +35,13 @@ import {
 export class PythonLanguageAdapter implements LanguageAdapter {
   readonly lang = "python";
 
+  private externalClient: LspClient | null = null;
+
+  /** Reuse an externally-managed pyright-langserver client (test injection / batch runs). */
+  setExternalLspClient(client: LspClient | null): void {
+    this.externalClient = client;
+  }
+
   async detect(repoRoot: string): Promise<DetectResult> {
     // High confidence markers
     for (const marker of ["pyproject.toml", "setup.py", "setup.cfg"]) {
@@ -249,8 +256,11 @@ export class PythonLanguageAdapter implements LanguageAdapter {
     let typeRelations: TypeRelation[] = [];
     let callEdges: CallEdge[] = [];
 
-    if (pyrightCmd !== null && allPyFiles.length > 0) {
-      const client = new LspClient([pyrightCmd, "--stdio"], repoRoot);
+    if (!this.externalClient && pyrightCmd === null) {
+      // No external client and no local pyright — degrade gracefully
+    } else if (allPyFiles.length > 0) {
+      const client = this.externalClient ?? new LspClient([pyrightCmd!, "--stdio"], repoRoot);
+      const ownClient = this.externalClient === null;
       try {
         const result = await this.indexWithPyright(repoRoot, allPyFiles, unitIds, client);
         symbols = result.symbols;
@@ -260,7 +270,9 @@ export class PythonLanguageAdapter implements LanguageAdapter {
       } catch {
         // pyright crashed or exited — degrade gracefully with empty LSP results
       } finally {
-        await client.shutdown();
+        if (ownClient) {
+          try { await client.shutdown(); } catch { /* ignore */ }
+        }
       }
     }
 

@@ -93,11 +93,28 @@ export async function updateFacts(
     affectedUnitSet.has(u.id),
   );
 
+  // unit ID prefix → adapter.lang のマッピング（短縮形 prefix は adapter.lang と一致しない場合がある）
+  const UNIT_PREFIX_TO_LANG: Record<string, string> = {
+    go: "go",
+    ts: "typescript",
+    py: "python",
+    cs: "csharp",
+    rs: "rust",
+    java: "java",
+    cpp: "cpp",
+    haskell: "haskell",
+    clj: "clojure",
+    clojure: "clojure",
+    ex: "elixir",
+    elixir: "elixir",
+  };
+
   // Group units by language
   const unitsByLang = new Map<string, typeof unitsToReindex>();
   for (const unit of unitsToReindex) {
-    // Extract lang from unit id: "unit:<lang>:<path>"
-    const lang = unit.id.split(":")[1]!;
+    // Extract lang from unit id: "unit:<prefix>:<path>" and resolve to adapter.lang
+    const prefix = unit.id.split(":")[1]!;
+    const lang = UNIT_PREFIX_TO_LANG[prefix] ?? prefix;
     const list = unitsByLang.get(lang) ?? [];
     list.push(unit);
     unitsByLang.set(lang, list);
@@ -106,7 +123,8 @@ export async function updateFacts(
   // 5. Save old diagnostics for affected units (fallback if re-diagnose fails)
   const oldDiagsByLang = new Map<string, typeof existingFacts.diagnostics>();
   for (const unit of unitsToReindex) {
-    const lang = unit.id.split(":")[1] ?? "unknown";
+    const prefix = unit.id.split(":")[1] ?? "unknown";
+    const lang = UNIT_PREFIX_TO_LANG[prefix] ?? prefix;
     const unitFileIds = new Set(
       existingFacts.files.filter((f) => f.unit_id === unit.id).map((f) => f.id),
     );

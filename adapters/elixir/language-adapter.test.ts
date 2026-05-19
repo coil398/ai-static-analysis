@@ -7,6 +7,7 @@ import {
   parseModuleDeclarations,
   parseModuleReferences,
   parseTopLevelDefs,
+  parseBehaviourRelations,
   parseCredoJson,
 } from "./index.ts";
 import { whichTool } from "../shared/index.ts";
@@ -179,6 +180,80 @@ end
     expect(pairs).toContain("function:public_fun:true");
     expect(pairs).toContain("function:private_fun:false");
   });
+});
+
+describe("parseBehaviourRelations", () => {
+  test("emits implements TypeRelation for @behaviour attribute", () => {
+    const src = `
+defmodule MyApp.Worker do
+  @behaviour GenServer
+
+  def init(state), do: {:ok, state}
+end
+`;
+    const { symbols, typeRelations } = parseBehaviourRelations(
+      src,
+      "unit:elixir:.",
+      "lib/worker.ex",
+    );
+    // Module symbol should be emitted
+    expect(symbols.some((s) => s.name === "MyApp.Worker" && s.kind === "module")).toBe(true);
+    // TypeRelation from MyApp.Worker → GenServer
+    expect(typeRelations).toHaveLength(1);
+    expect(typeRelations[0]!.kind).toBe("implements");
+    expect(typeRelations[0]!.from_type_id).toContain("MyApp.Worker");
+    expect(typeRelations[0]!.to_type_id).toContain("GenServer");
+  });
+
+  test("emits implements TypeRelation for defimpl block", () => {
+    const src = `
+defprotocol Testproject.Printer do
+  def print(this, value)
+end
+
+defimpl Testproject.Printer, for: BitString do
+  def print(_this, value) do
+    IO.puts(value)
+  end
+end
+`;
+    const { symbols, typeRelations } = parseBehaviourRelations(
+      src,
+      "unit:elixir:.",
+      "lib/greeter.ex",
+    );
+    // class symbol for BitString should be emitted
+    expect(symbols.some((s) => s.name === "BitString" && s.kind === "class")).toBe(true);
+    // TypeRelation: BitString implements Testproject.Printer
+    expect(typeRelations.some((r) => r.kind === "implements")).toBe(true);
+    const rel = typeRelations.find((r) => r.kind === "implements");
+    expect(rel!.from_type_id).toContain("BitString");
+    expect(rel!.to_type_id).toContain("Testproject.Printer");
+  });
+
+  test("returns empty when no behaviours or defimpls present", () => {
+    const src = `
+defmodule Plain do
+  def greet(name), do: "Hello, \#{name}!"
+end
+`;
+    const { typeRelations } = parseBehaviourRelations(
+      src,
+      "unit:elixir:.",
+      "lib/plain.ex",
+    );
+    expect(typeRelations).toHaveLength(0);
+  });
+
+  test("indexUnits emits type_relations for testdata greeter.ex", async () => {
+    const adapter = new ElixirLanguageAdapter();
+    const units = await adapter.enumerateUnits(TESTDATA, {});
+    const delta = await adapter.indexUnits(units, {});
+    // greeter.ex contains defimpl Testproject.Printer, for: BitString
+    // so at least one implements relation should be present
+    const rels = delta.added.type_relations ?? [];
+    expect(rels.some((r) => r.kind === "implements")).toBe(true);
+  }, LSP_TIMEOUT_MS);
 });
 
 describe("parseCredoJson", () => {

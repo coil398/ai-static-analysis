@@ -335,8 +335,8 @@ cache/facts/
 
 ※ `scope`は`repo|unit|files|paths`いずれかで指定できること。
 
-### 8.3 InsightAdapter（設計方針: 実装しない）
-決定論ツールでは取れない「意味」の層を AI で生成するが、外部 AI API を呼び出す InsightAdapter は実装しない設計とする。
+### 8.3 AI Insights（設計方針: InsightAdapter は実装しない）
+決定論ツールでは取れない「意味」の層を AI で生成するが、外部 AI API を呼び出す InsightAdapter インターフェースは廃止・削除済み。
 Claude Code 自身がスキル定義（analyze-insights.md）を読んで分析を行い、結果を `cache/insights.json` に保存する。
 `skills/insights.ts` はコンテキスト準備（facts + ソースコード読み込み）と query 関数のみを担当する。
 

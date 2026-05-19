@@ -256,6 +256,28 @@ export class ClojureLanguageAdapter implements LanguageAdapter {
       }
     }
 
+    // Parser-based protocol/defrecord type_relations (merged with LSP results)
+    for (const { relPath, unitId } of cljFiles) {
+      const text = await safeRead(resolve(repoRoot, relPath));
+      if (text === null) continue;
+      const { symbols: protoSyms, typeRelations: protoRels } =
+        parseProtocolRelations(text, unitId, relPath);
+      // Add protocol/record symbols if not already present (LSP may have captured them)
+      for (const sym of protoSyms) {
+        if (!symbols.some((s) => s.id === sym.id)) {
+          symbols.push(sym);
+        }
+      }
+      // Merge type_relations (deduplicate by from+to+kind)
+      for (const rel of protoRels) {
+        const key = `${rel.from_type_id}|${rel.to_type_id}|${rel.kind}`;
+        const exists = typeRelations.some(
+          (r) => `${r.from_type_id}|${r.to_type_id}|${r.kind}` === key,
+        );
+        if (!exists) typeRelations.push(rel);
+      }
+    }
+
     return {
       added: {
         units,
@@ -469,6 +491,19 @@ export function parseRequires(text: string): string[] {
 const DEFN_RE = /\(\s*(?:defn|defn-|defmacro|defmulti)\s+([\w.\-?!*+<>=]+)/g;
 const DEF_RE = /\(\s*def\s+([\w.\-?!*+<>=]+)/g;
 
+/** Convert a byte offset in `source` to a 1-based line/column position. */
+function offsetToPosition(
+  source: string,
+  offset: number,
+): { line: number; column: number } {
+  let line = 1;
+  let lastNl = -1;
+  for (let i = 0; i < offset; i++) {
+    if (source.charCodeAt(i) === 10) { line++; lastNl = i; }
+  }
+  return { line, column: offset - lastNl };
+}
+
 /** Fallback symbol scan when clojure-lsp is unavailable. */
 export function parseTopLevelDefs(
   source: string,
@@ -480,15 +515,7 @@ export function parseTopLevelDefs(
   const ns = parseNamespace(source);
 
   function pushDef(name: string, kind: string, offset: number) {
-    let line = 1;
-    let lastNl = -1;
-    for (let i = 0; i < offset; i++) {
-      if (source.charCodeAt(i) === 10) {
-        line++;
-        lastNl = i;
-      }
-    }
-    const column = offset - lastNl;
+    const { line, column } = offsetToPosition(source, offset);
     const sigHash = hashSig(`${name}:${kind}:${line}`);
     out.push({
       id: `sym:clojure:${unitPath}#${kind}#${name}#sig:${sigHash}`,
@@ -514,6 +541,85 @@ export function parseTopLevelDefs(
     pushDef(m[1]!, "var", m.index);
   }
   return out;
+}
+
+const DEFPROTOCOL_RE = /\(\s*defprotocol\s+([\w.\-?!*+<>=]+)/g;
+const DEFRECORD_SIMPLE_RE = /\(\s*(?:defrecord|deftype)\s+([\w.\-?!*+<>=]+)/g;
+
+/**
+ * Parse protocol definitions and their implementations from Clojure source.
+ * Detects `defprotocol` and `defrecord`/`deftype` with inline protocol implementations.
+ * Returns symbols for protocols (kind: "interface") and records (kind: "class"),
+ * plus TypeRelation entries for implementations.
+ */
+export function parseProtocolRelations(
+  source: string,
+  unitId: string,
+  relPath: string,
+): { symbols: Symbol[]; typeRelations: TypeRelation[] } {
+  const symbols: Symbol[] = [];
+  const typeRelations: TypeRelation[] = [];
+  const unitPath = unitId.replace(/^unit:clojure:/, "");
+
+  // Collect defprotocol definitions
+  const protocols = new Map<string, Symbol>(); // protocol name → Symbol
+  DEFPROTOCOL_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = DEFPROTOCOL_RE.exec(source)) !== null) {
+    const name = m[1]!;
+    const pos = offsetToPosition(source, m.index);
+    const sigHash = hashSig(`${name}:interface:${pos.line}`);
+    const sym: Symbol = {
+      id: `sym:clojure:${unitPath}#interface#${name}#sig:${sigHash}`,
+      unit_id: unitId,
+      name,
+      kind: "interface",
+      exported: !name.startsWith("-"),
+      decl: { file_id: `file:${relPath}`, position: pos },
+    };
+    symbols.push(sym);
+    protocols.set(name, sym);
+  }
+
+  // Collect defrecord/deftype and their inline protocol implementations
+  // Strategy: for each defrecord/deftype, find the block and extract protocol names
+  // A protocol name in the body appears as a bare symbol (not a function definition)
+  // immediately before method definitions: (RecordName [] Protocol (method ...))
+  DEFRECORD_SIMPLE_RE.lastIndex = 0;
+  while ((m = DEFRECORD_SIMPLE_RE.exec(source)) !== null) {
+    const recordName = m[1]!;
+    const pos = offsetToPosition(source, m.index);
+    const sigHash = hashSig(`${recordName}:class:${pos.line}`);
+    const recordSym: Symbol = {
+      id: `sym:clojure:${unitPath}#class#${recordName}#sig:${sigHash}`,
+      unit_id: unitId,
+      name: recordName,
+      kind: "class",
+      exported: !recordName.startsWith("-"),
+      decl: { file_id: `file:${relPath}`, position: pos },
+    };
+    symbols.push(recordSym);
+
+    // Find inline protocol implementations in the record body by looking for
+    // protocol names (known from protocols map) appearing after the fields vector
+    // The pattern: (defrecord Name [fields] Protocol (method ...) ...)
+    const afterRecord = source.slice(m.index + m[0]!.length);
+    // Look for protocol names within next 2000 chars (typical record body size)
+    const body = afterRecord.slice(0, 2000);
+    for (const [protoName, protoSym] of protocols) {
+      // Protocol name appears as a bare symbol (preceded by whitespace/newline, not inside parens)
+      const protoRe = new RegExp(`(?:^|\\s)(${protoName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})(?:\\s|\\()`, "m");
+      if (protoRe.test(body)) {
+        typeRelations.push({
+          from_type_id: recordSym.id,
+          to_type_id: protoSym.id,
+          kind: "implements",
+        });
+      }
+    }
+  }
+
+  return { symbols, typeRelations };
 }
 
 async function runClojureLspIndexing(
